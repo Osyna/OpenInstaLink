@@ -1,0 +1,20 @@
+# Pinned top level of the managed Python 3.11 runtime (installed only by an explicit model download).
+# torch/torchvision include security upgrades; onnxruntime-gpu matches their CUDA 13 + cuDNN 9 runtime.
+# Transitive dependencies are resolved by uv/pip. On Linux, CUDA libraries install under nvidia/cu13/lib
+# and cuDNN under nvidia/cudnn/lib; onnxruntime.preload_dlls() discovers both for YOLO11n.
+# CUDA 13 GPU execution requires an NVIDIA 580+ driver and a Turing or newer GPU.
+# mediapipe depends on exactly opencv-contrib-python; never add opencv-python or opencv-python-headless (both ship
+# `cv2` and corrupt each other). mediapipe also dlopens libEGL.so.1 / libGLESv2.so.2 (apt: libegl1 libgles2).
+numpy==2.3.4
+scipy==1.16.3
+Pillow==13.0.0
+opencv-contrib-python==4.10.0.84
+mediapipe==1.2.0
+onnxruntime-gpu==1.28.0
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.17.0
+tokenizers==0.23.3
+diffusers==0.42.1
+safetensors
+huggingface_hub>=1.32
