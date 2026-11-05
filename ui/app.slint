@@ -1,0 +1,3021 @@
+import { ComboBox, LineEdit, TextEdit, ScrollView } from "std-widgets.slint";
+import { Button, Tok, Icons, Icon, Switch, RangeSlider, StatusPill } from "studio.slint";
+
+// One backend control, already grouped, humanised and formatted by gui.rs.
+// kind: 0 number, 1 toggle, 2 choice. `rev` changes whenever the user committed a value,
+// so the widgets re-read the backend's readback even if it equals the previous value.
+export struct ControlRow {
+    key: string,
+    label: string,
+    heading: string,
+    kind: int,
+    text: string,
+    num: float,
+    lo: float,
+    hi: float,
+    inc: float,
+    has-def: bool,
+    def: float,
+    checked: bool,
+    options: [string],
+    sel: int,
+    rev: int,
+}
+
+export struct AreaRow {
+    active: bool,
+    x: string,
+    y: string,
+    w: string,
+    h: string,
+    pan: string,
+    tilt: string,
+}
+
+export struct HistoryRow {
+    token: string,
+    title: string,
+    detail: string,
+}
+
+// Recommended start values for the AI option sliders of the selected model, set by gui.rs.
+export struct AiDefaults {
+    max-results: float,
+    min-conf: float,
+    threshold: float,
+    top-k: float,
+    steps: float,
+    ensemble: float,
+    interval: float,
+}
+
+
+component Heading inherits Text {
+    min-height: 28px;
+    font-size: 16px;
+    font-weight: 600;
+    color: Tok.foreground;
+    vertical-alignment: bottom;
+}
+
+component InspectorHeading inherits Rectangle {
+    in property <string> title;
+    in property <string> hint;
+    background: Tok.panel;
+    VerticalLayout {
+        alignment: start;
+        spacing: 5px;
+        Text { text: root.title; color: Tok.foreground; font-size: 21px; font-weight: 600; }
+        Text { text: root.hint; color: Tok.muted; font-size: 12px; wrap: word-wrap; }
+    }
+}
+
+component Hint inherits Text {
+    wrap: word-wrap;
+    font-size: 12px;
+    color: Tok.muted;
+}
+
+component Divider inherits Rectangle {
+    height: 1px;
+    background: Tok.rule;
+}
+
+// Name, live readout, reset-to-default and the slider as one labelled range control. Wheel, arrow
+// keys, double-click and the reset button come from RangeSlider. `has-default: false` means the
+// device reports no default: nothing is reset and the note says so.
+component SliderField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> readout;
+    in property <bool> enabled: true;
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in property <bool> has-default: true;
+    in property <float> default-value;
+    in property <string> unknown-note: "No default is known for this setting, so nothing was reset.";
+    in-out property <float> value <=> bar.value;
+    callback changed <=> bar.changed;
+    callback released <=> bar.released;
+    property <bool> unknown;
+    spacing: 4px;
+    changed value => {
+        root.unknown = false;
+    }
+    HorizontalLayout {
+        spacing: 6px;
+        Text {
+            text: root.label;
+            color: root.enabled ? Tok.foreground : Tok.disabled-fg;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.readout;
+            color: root.enabled ? Tok.foreground : Tok.disabled-fg;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            accessible-role: none;
+        }
+
+        if root.has-default: Button {
+            icon: Icons.reset;
+            icon-size: 16px;
+            quiet: true;
+            compact: true;
+            accessible-label: "Reset " + root.label + " to its default";
+            enabled: root.enabled && !bar.at-default;
+            clicked => {
+                bar.reset();
+            }
+        }
+    }
+
+    bar := RangeSlider {
+        enabled: root.enabled;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        step: root.step;
+        has-default: root.has-default;
+        default-value: root.default-value;
+        accessible-label: root.label;
+        no-default => {
+            root.unknown = true;
+        }
+    }
+
+    if root.unknown: Text {
+        text: root.unknown-note;
+        wrap: word-wrap;
+        font-size: 12px;
+        color: Tok.muted;
+    }
+}
+
+component NumberLine inherits VerticalLayout {
+    in property <ControlRow> control;
+    callback commit-text(string);
+    callback commit-float(float);
+    callback editing(bool);
+    property <bool> typing;
+    property <bool> unknown;
+    property <bool> ranged: root.control.hi > root.control.lo && root.control.text != "";
+    property <int> rev: root.control.rev;
+    property <string> shown: root.control.text;
+    property <float> num: root.control.num;
+    spacing: 5px;
+    min-height: (root.ranged ? 72px : 38px) + (root.unknown ? 18px : 0px);
+    changed rev => {
+        root.unknown = false;
+        root.typing = false;
+        root.editing(false);
+        entry.text = root.shown;
+        knob.value = root.num;
+    }
+    changed shown => {
+        if !root.typing {
+            entry.text = root.shown;
+        }
+    }
+    changed num => {
+        if !root.typing {
+            knob.value = root.num;
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: root.control.label;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        if root.ranged && root.control.has-def: Button {
+            icon: Icons.reset;
+            icon-size: 16px;
+            quiet: true;
+            compact: true;
+            accessible-label: "Reset " + root.control.label + " to the camera default";
+            enabled: Math.abs(knob.value - root.control.def) >= (root.control.inc > 0 ? root.control.inc : (root.control.hi - root.control.lo) / 100) / 2;
+            clicked => {
+                knob.reset();
+            }
+        }
+
+        entry := LineEdit {
+            text: root.shown;
+            min-width: 88px;
+            max-width: 112px;
+            horizontal-alignment: right;
+            accessible-label: root.control.label;
+            placeholder-text: "not readable";
+            edited(t) => {
+                root.typing = true;
+                root.editing(true);
+            }
+            accepted(t) => {
+                root.typing = false;
+                root.editing(false);
+                root.commit-text(t);
+            }
+            changed has-focus => {
+                if !self.has-focus && root.typing {
+                    root.typing = false;
+                    root.editing(false);
+                    root.commit-text(self.text);
+                }
+            }
+        }
+    }
+
+    knob := RangeSlider {
+        visible: root.ranged;
+        min-height: root.ranged ? 28px : 0px;
+        max-height: root.ranged ? 28px : 0px;
+        minimum: root.control.lo;
+        maximum: root.ranged ? root.control.hi : root.control.lo + 1;
+        step: root.control.inc > 0 ? root.control.inc : (root.control.hi - root.control.lo) / 100;
+        has-default: root.control.has-def;
+        default-value: root.control.def;
+        value: root.num;
+        accessible-label: root.control.label;
+        changed(v) => {
+            root.typing = true;
+            root.editing(true);
+            entry.text = "\{Math.round(v * 100) / 100}";
+            root.unknown = false;
+        }
+        released(v) => {
+            root.typing = false;
+            root.editing(false);
+            root.commit-float(v);
+        }
+        no-default => {
+            root.unknown = true;
+        }
+    }
+
+    if root.unknown: Text {
+        text: "The camera reports no default for " + root.control.label + ", so nothing was reset.";
+        wrap: word-wrap;
+        font-size: 12px;
+        color: Tok.muted;
+    }
+}
+
+component ToggleLine inherits HorizontalLayout {
+    in property <ControlRow> control;
+    callback commit(bool);
+    property <bool> checked: root.control.checked;
+    property <int> rev: root.control.rev;
+    changed checked => {
+        box.checked = root.checked;
+    }
+    changed rev => {
+        box.checked = root.checked;
+    }
+    box := Switch {
+        text: root.control.label;
+        checked: root.checked;
+        toggled => {
+            root.commit(self.checked);
+        }
+    }
+}
+
+component ChoiceLine inherits HorizontalLayout {
+    in property <ControlRow> control;
+    callback commit(int);
+    property <int> sel: root.control.sel;
+    property <int> rev: root.control.rev;
+    spacing: 8px;
+    changed sel => {
+        pick.current-index = root.sel;
+    }
+    changed rev => {
+        pick.current-index = root.sel;
+    }
+    Text {
+        text: root.control.label;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+
+    pick := ComboBox {
+        model: root.control.options;
+        current-index: root.sel;
+        min-width: 140px;
+        max-width: 210px;
+        accessible-label: root.control.label;
+        selected => {
+            root.commit(self.current-index);
+        }
+    }
+}
+
+component ZoneLine inherits VerticalLayout {
+    in property <int> index;
+    in property <AreaRow> zone;
+    callback edit(int, string);
+    callback active(bool);
+    callback remove();
+    spacing: 4px;
+    HorizontalLayout {
+        spacing: 8px;
+        Switch {
+            text: "Zone " + (root.index + 1) + " active";
+            checked: root.zone.active;
+            horizontal-stretch: 1;
+            toggled => {
+                root.active(self.checked);
+            }
+        }
+
+        Button {
+            text: "Remove";
+            clicked => {
+                root.remove();
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        LineEdit {
+            text: root.zone.x;
+            min-width: 56px;
+            placeholder-text: "x";
+            accessible-label: "Zone " + (root.index + 1) + " x";
+            edited(t) => {
+                root.edit(0, t);
+            }
+        }
+
+        LineEdit {
+            text: root.zone.y;
+            min-width: 56px;
+            placeholder-text: "y";
+            accessible-label: "Zone " + (root.index + 1) + " y";
+            edited(t) => {
+                root.edit(1, t);
+            }
+        }
+
+        LineEdit {
+            text: root.zone.w;
+            min-width: 56px;
+            placeholder-text: "width";
+            accessible-label: "Zone " + (root.index + 1) + " width";
+            edited(t) => {
+                root.edit(2, t);
+            }
+        }
+
+        LineEdit {
+            text: root.zone.h;
+            min-width: 56px;
+            placeholder-text: "height";
+            accessible-label: "Zone " + (root.index + 1) + " height";
+            edited(t) => {
+                root.edit(3, t);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        LineEdit {
+            text: root.zone.pan;
+            min-width: 56px;
+            placeholder-text: "pan °";
+            accessible-label: "Zone " + (root.index + 1) + " pan";
+            edited(t) => {
+                root.edit(4, t);
+            }
+        }
+
+        LineEdit {
+            text: root.zone.tilt;
+            min-width: 56px;
+            placeholder-text: "tilt °";
+            accessible-label: "Zone " + (root.index + 1) + " tilt";
+            edited(t) => {
+                root.edit(5, t);
+            }
+        }
+    }
+}
+
+component CornerRow inherits HorizontalLayout {
+    in property <string> name;
+    in-out property <string> x-text;
+    in-out property <string> y-text;
+    callback commit();
+    spacing: 8px;
+    Text {
+        text: root.name;
+        width: 96px;
+        vertical-alignment: center;
+    }
+
+    LineEdit {
+        text <=> root.x-text;
+        min-width: 70px;
+        placeholder-text: "x 0–1";
+        accessible-label: root.name + " x";
+        accepted => {
+            root.commit();
+        }
+    }
+
+    LineEdit {
+        text <=> root.y-text;
+        min-width: 70px;
+        placeholder-text: "y 0–1";
+        accessible-label: root.name + " y";
+        accepted => {
+            root.commit();
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "Link Camera";
+    preferred-width: 1440px;
+    preferred-height: 900px;
+    min-width: 900px;
+    min-height: 640px;
+    default-font-size: 14px;
+    background: Tok.canvas;
+    in-out property <int> active-page;
+    property <bool> status-expanded;
+    changed active-page => {
+        root.delete-armed = false;
+        root.preset-delete-armed = false;
+        root.ai-delete-armed = false;
+        root.vcam-remove-armed = false;
+        root.ai-download-armed = false;
+        root.ai-history-clear-armed = false;
+    }
+    changed vcam-index => {
+        root.vcam-remove-armed = false;
+    }
+    changed ai-model-index => {
+        root.ai-delete-armed = false;
+        root.ai-download-armed = false;
+    }
+    changed preset-index => { root.preset-delete-armed = false; }
+    changed status-text => { root.status-expanded = false; }
+
+    // toolbar / device
+    in property <[string]> devices;
+    in-out property <int> device-index;
+    in property <string> device-info;
+    in property <bool> previewing;
+    in property <bool> recording;
+    in property <bool> paused;
+    in property <bool> media-busy;
+    in property <bool> backend-busy;
+    in property <bool> can-stop-preview;
+    in property <bool> preview-starting;
+    in property <[string]> resolutions;
+    in-out property <int> resolution-index;
+    in property <[string]> fps-list;
+    in-out property <int> fps-index;
+
+    // stage
+    in property <image> frame;
+    in property <bool> has-frame;
+    in property <string> frame-info;
+    in property <string> stage-title;
+    in property <string> stage-hint;
+    in property <string> recording-note;
+    // stage view: 0 live camera, 1 analysis result, 2 frozen frame for SAM picking
+    in-out property <int> stage-mode;
+    in property <string> stage-caption;
+
+    // status bar
+    in property <string> status-text;
+    in property <bool> status-error;
+
+    // camera tab
+    in property <[ControlRow]> controls;
+    in property <string> controls-note;
+    in property <string> warnings;
+    // Tracking capability and state as the camera reports them (tone: 0 neutral, 1 on, 3 problem).
+    in property <string> tracking-label;
+    in property <string> tracking-detail;
+    in property <int> tracking-tone;
+    in-out property <bool> controls-editing;
+    in property <[string]> profiles;
+    in-out property <int> profile-index;
+    in-out property <string> profile-name;
+    property <bool> delete-armed;
+
+    // effects tab
+    in-out property <int> fx-bg-index;
+    in-out property <float> fx-blur: 10;
+    in-out property <string> fx-bg-image;
+    in-out property <float> fx-soften;
+    in-out property <bool> fx-mirror;
+    in-out property <string> fx-overlay;
+    in-out property <float> fx-opacity: 1;
+    in-out property <bool> fx-board-on;
+    in-out property <string> fx-tlx;
+    in-out property <string> fx-tly;
+    in-out property <string> fx-trx;
+    in-out property <string> fx-try;
+    in-out property <string> fx-brx;
+    in-out property <string> fx-bry;
+    in-out property <string> fx-blx;
+    in-out property <string> fx-bly;
+
+    // views tab
+    in property <[string]> preset-list;
+    in-out property <int> preset-index;
+    in-out property <int> preset-slot;
+    in-out property <string> preset-name;
+    in property <string> presets-note;
+    in property <bool> has-gimbal;
+    in property <bool> has-pause-areas;
+    in property <[AreaRow]> pause-zones;
+    in property <string> areas-note;
+    in property <bool> has-tracking-area;
+    in property <string> tracking-note;
+    in-out property <string> ta-pan-min;
+    in-out property <string> ta-pan-max;
+    in-out property <string> ta-tilt-min;
+    in-out property <string> ta-tilt-max;
+    property <bool> preset-delete-armed;
+
+    // output tab
+    in-out property <string> snapshot-dir;
+    in-out property <string> record-dir;
+    in-out property <int> container-index;
+    in property <[string]> audio-sources;
+    in-out property <int> audio-index;
+    in property <string> audio-note;
+    // Microphone state for the source chosen above; filled from the audio service, never guessed.
+    in property <string> mic-title;
+    in property <string> mic-detail;
+    in property <string> mic-state;
+    in property <int> mic-state-tone;
+    in property <string> camera-mic-note;
+    in property <bool> camera-mic-available;
+    in property <bool> mic-listed;
+    in property <bool> mic-busy;
+    in property <bool> mic-muted-known;
+    in-out property <bool> mic-muted;
+    in property <bool> mic-volume-known;
+    in-out property <float> mic-volume;
+    // Virtual camera outputs.
+    in property <[string]> vcam-list;
+    in-out property <int> vcam-index: -1;
+    in-out property <string> vcam-name: "Link Camera";
+    in property <string> vcam-status;
+    in property <string> vcam-note;
+    in property <bool> vcam-note-error;
+    in property <bool> vcam-busy;
+    in property <bool> vcam-stopping;
+    in property <bool> vcam-selected-owned;
+    in property <bool> vcam-selected-active;
+    in property <string> vout-active;
+    property <bool> vcam-remove-armed;
+    in property <string> remote-command;
+
+    // teleprompter
+    in-out property <string> script-text;
+    in-out property <string> script-path;
+    in-out property <bool> prompter-show: true;
+    in-out property <bool> prompter-playing;
+    in-out property <float> prompter-speed: 60;
+    in-out property <float> prompter-size: 40;
+    in-out property <float> prompter-offset;
+
+    // AI models tab
+    in property <bool> ai-ready;
+    in property <string> ai-lib-state;
+    in property <int> ai-lib-tone;
+    in property <string> ai-lib-device;
+    in property <string> ai-lib-disk;
+    in property <bool> ai-lib-job;
+    in property <bool> ai-lib-can-cancel;
+    in property <string> ai-lib-job-note;
+    in property <bool> ai-lib-can-download;
+    in property <bool> ai-lib-can-delete;
+    in property <string> ai-lib-note;
+    in property <bool> ai-lib-note-error;
+    property <bool> ai-delete-armed;
+    property <bool> ai-download-armed;
+    property <int> ai-section;
+    property <bool> ai-details-expanded;
+    property <bool> ai-history-clear-armed;
+    property <bool> ai-history-browse: true;
+    changed ai-section => {
+        root.ai-delete-armed = false;
+        root.ai-download-armed = false;
+        root.ai-history-clear-armed = false;
+    }
+    in property <AiDefaults> ai-def;
+    in property <bool> ai-busy;
+    in property <bool> ai-stopping;
+    in property <bool> ai-can-stop;
+    in property <bool> ai-saving;
+    in property <bool> ai-can-run;
+    in property <string> ai-run-hint;
+    in property <string> ai-note;
+    in property <bool> ai-note-error;
+    in property <[string]> ai-models;
+    in-out property <int> ai-model-index;
+    in property <string> ai-model-info;
+    in property <string> ai-purpose;
+    in property <string> ai-best-for;
+    in property <string> ai-outputs;
+    in property <string> ai-performance;
+    in property <string> ai-limitations;
+    in property <string> ai-model-license;
+    in property <int> ai-kind;
+    in-out property <float> ai-max-results: 2;
+    in-out property <float> ai-min-conf: 0.5;
+    in-out property <bool> ai-blend;
+    in-out property <float> ai-threshold: 0.25;
+    in-out property <float> ai-top-k: 100;
+    in-out property <int> ai-task-index;
+    in-out property <string> ai-points;
+    in-out property <string> ai-box;
+    in-out property <bool> ai-multimask;
+    in-out property <int> ai-pick-mode;
+    in property <bool> ai-frozen;
+    in property <string> ai-frozen-note;
+    in property <image> ai-frozen-image;
+    in-out property <int> ai-colormap-index;
+    in-out property <float> ai-steps: 4;
+    in-out property <float> ai-ensemble: 1;
+    in-out property <bool> ai-live;
+    in-out property <float> ai-interval: 1;
+    in property <string> ai-interval-note;
+    in property <bool> ai-has-result;
+    in property <image> ai-image;
+    in property <string> ai-result-info;
+    in-out property <bool> ai-show-source;
+    in property <string> ai-text;
+    in property <string> ai-raw;
+    in property <[HistoryRow]> ai-history;
+    in property <string> ai-history-selected;
+    in property <int> ai-history-count;
+    in property <bool> ai-history-follow;
+    in property <bool> ai-history-loading;
+    in property <string> ai-history-memory;
+    in-out property <bool> ai-history-raw;
+    in-out property <string> ai-out-dir;
+    // settings tab
+    in-out property <bool> ai-enabled;
+    in property <string> settings-note;
+    in property <bool> settings-error;
+
+    callback refresh-devices();
+    callback select-device(int);
+    callback reconnect();
+    callback toggle-preview();
+    callback select-resolution(int);
+    callback select-fps(int);
+    callback dismiss-status();
+
+    callback refresh-controls();
+    callback set-number(int, string);
+    callback set-float(int, float);
+    callback set-toggle(int, bool);
+    callback set-choice(int, int);
+    callback profile-save();
+    callback profile-load();
+    callback profile-delete();
+    callback preset-recall();
+    callback preset-delete();
+    callback preset-save();
+    callback recenter();
+    callback area-add();
+    callback area-remove(int);
+    callback area-edit(int, int, string);
+    callback area-active(int, bool);
+    callback areas-apply();
+    callback areas-reload();
+    callback tracking-apply();
+    callback tracking-reload();
+
+    callback apply-effects();
+    callback apply-board();
+    callback reset-board();
+    callback browse(int);
+
+    callback snapshot();
+    callback record();
+    callback pause-record();
+    callback stop-record();
+    callback vcam-refresh();
+    callback vcam-create(string);
+    callback vcam-remove();
+    callback vcam-toggle();
+    callback vcam-stop-all();
+    callback refresh-audio();
+    callback audio-selected(int);
+    callback use-camera-mic();
+    callback set-mic-muted(bool);
+    callback set-mic-volume(float);
+
+    callback script-edited();
+    callback script-load();
+    callback script-save();
+
+    callback ai-refresh-library();
+    callback ai-download();
+    callback ai-cancel-download();
+    callback ai-delete();
+    callback ai-select-model(int);
+    callback ai-defaults();
+    callback ai-run();
+    callback ai-stop();
+    callback ai-live-toggled(bool);
+    callback ai-freeze();
+    callback ai-unfreeze();
+    callback ai-clear-prompts();
+    callback ai-prompts-edited();
+    callback ai-pick(float, float, float, float, float, float);
+    callback ai-set-stage(int);
+    callback ai-source-toggled(bool);
+    callback ai-save-raw();
+    callback ai-save-visual();
+    callback ai-select-history(string);
+    callback ai-history-follow-toggled(bool);
+    callback ai-history-clear();
+    callback ai-history-raw-toggled(bool);
+
+    public function ai-history-inserted() {
+        if root.ai-history-follow {
+            history-list.content-y = 0px;
+        } else if history-list.content-y < 0px {
+            history-list.content-y -= 54px;
+        }
+    }
+    callback ai-enabled-toggled(bool);
+
+    changed profile-index => {
+        root.delete-armed = false;
+    }
+
+    Timer {
+        interval: 33ms;
+        running: root.prompter-playing && root.prompter-show && root.stage-mode != 2;
+        triggered => {
+            root.prompter-offset += root.prompter-speed * 0.033;
+            if root.prompter-offset * 1px >= prompt.height {
+                root.prompter-offset = prompt.height / 1px;
+                root.prompter-playing = false;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 18px;
+        Rectangle {
+            width: 84px;
+            background: Tok.panel;
+            border-radius: Tok.radius-panel;
+            drop-shadow-color: Tok.shadow;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-blur: 20px;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 4px;
+                Rectangle {
+                    height: 56px;
+                    Icon {
+                        width: 36px; height: 36px;
+                        x: (parent.width - self.width) / 2;
+                        y: 8px;
+                        source: Icons.link-logo;
+                        color: Tok.accent;
+                    }
+                }
+                Button { nav: true; text: "Camera"; icon: Icons.sliders; selected: root.active-page == 0; clicked => { root.active-page = 0; } }
+                Button { nav: true; text: "Effects"; icon: Icons.effects; selected: root.active-page == 2; clicked => { root.active-page = 2; } }
+                Button { nav: true; text: "Views"; icon: Icons.frame; selected: root.active-page == 1; clicked => { root.active-page = 1; } }
+                Button { nav: true; text: "Output"; icon: Icons.output; selected: root.active-page == 3; clicked => { root.active-page = 3; } }
+                Button { nav: true; text: "Script"; icon: Icons.script; selected: root.active-page == 5; clicked => { root.active-page = 5; } }
+                Rectangle { vertical-stretch: 1; }
+                Divider { }
+                Button { nav: true; text: "AI tools"; icon: Icons.sparkles; selected: root.active-page == 4; clicked => { root.active-page = 4; } }
+                Button { nav: true; text: "Settings"; icon: Icons.settings; selected: root.active-page == 6; clicked => { root.active-page = 6; } }
+            }
+        }
+        VerticalLayout {
+            spacing: 16px;
+            HorizontalLayout {
+                min-height: 68px;
+                spacing: 12px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 3px;
+                    Text { text: "Link Camera"; font-size: 26px; font-weight: 600; color: Tok.foreground; }
+                    Text { text: "Your camera workspace"; font-size: 13px; color: Tok.muted; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                ComboBox {
+                    model: root.devices;
+                    current-index <=> root.device-index;
+                    enabled: root.devices.length > 0 && !root.recording && !root.media-busy && !root.backend-busy;
+                    min-width: 170px;
+                    preferred-width: 260px;
+                    max-width: 340px;
+                    accessible-label: "Camera";
+                    selected => { root.select-device(self.current-index); }
+                }
+                Button {
+                    icon: Icons.refresh; quiet: true;
+                    accessible-label: "Refresh devices";
+                    enabled: !root.recording && !root.media-busy;
+                    clicked => { root.refresh-devices(); }
+                }
+                Button {
+                    icon: Icons.camera; quiet: true;
+                    accessible-label: "Reconnect camera";
+                    enabled: root.devices.length > 0 && !root.recording && !root.media-busy && !root.backend-busy;
+                    clicked => { root.reconnect(); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 18px;
+                Rectangle {
+                    min-width: 280px;
+                    horizontal-stretch: 1;
+                    background: Tok.panel;
+                    border-radius: Tok.radius-panel;
+                    drop-shadow-color: Tok.shadow;
+                    drop-shadow-offset-y: 6px;
+                    drop-shadow-blur: 20px;
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text { text: root.stage-mode == 1 ? "Analysis result" : root.stage-mode == 2 ? "Frozen frame" : "Live preview"; font-size: 18px; font-weight: 600; color: Tok.foreground; }
+                                Text { text: root.stage-mode != 0 ? "Matched to its source frame" : root.recording ? (root.paused ? "Recording paused" : "Recording in progress") : root.has-frame ? "Camera is streaming" : root.preview-starting ? "Starting camera…" : "Preview is off"; color: Tok.muted; font-size: 12px; }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            if root.stage-mode != 0: Button {
+                                icon: Icons.camera; compact: true; quiet: true;
+                                accessible-label: "Back to live view";
+                                clicked => { root.ai-set-stage(0); }
+                            }
+                            Button {
+                                text: root.previewing ? "Stop preview" : root.preview-starting ? "Starting…" : "Start preview";
+                                icon: root.previewing ? Icons.stop : Icons.play;
+                                compact: true;
+                                primary: !root.previewing;
+                                enabled: root.previewing ? root.can-stop-preview : root.devices.length > 0 && !root.recording && !root.media-busy && !root.backend-busy;
+                                clicked => { root.toggle-preview(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Format"; color: Tok.muted; font-size: 12px; vertical-alignment: center; }
+                            ComboBox {
+                                model: root.resolutions; current-index <=> root.resolution-index;
+                                enabled: root.resolutions.length > 0 && !root.recording && !root.media-busy;
+                                min-width: 100px; horizontal-stretch: 1;
+                                accessible-label: "Resolution";
+                                selected => { root.select-resolution(self.current-index); }
+                            }
+                            ComboBox {
+                                model: root.fps-list; current-index <=> root.fps-index;
+                                enabled: root.fps-list.length > 0 && !root.recording && !root.media-busy;
+                                min-width: 64px; max-width: 84px;
+                                accessible-label: "Frames per second";
+                                selected => { root.select-fps(self.current-index); }
+                            }
+                            Text { text: "fps"; color: Tok.muted; font-size: 12px; vertical-alignment: center; }
+                        }
+                stage := Rectangle {
+                    background: Tok.stage;
+                    clip: true;
+                    border-radius: 18px;
+                    vertical-stretch: 1;
+                    min-height: root.status-expanded ? 96px : 180px;
+
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.frame;
+                        image-fit: contain;
+                        visible: root.has-frame && root.stage-mode == 0;
+                    }
+
+                    if !root.has-frame && root.stage-mode == 0: VerticalLayout {
+                        alignment: center;
+                        padding: root.status-expanded ? 8px : 32px;
+                        spacing: 6px;
+                        HorizontalLayout {
+                            alignment: center;
+                            Icon { source: Icons.camera; color: Tok.stage-muted; width: 44px; height: 44px; horizontal-stretch: 0; }
+                        }
+                        Text {
+                            text: root.stage-title;
+                            color: Tok.stage-fg;
+                            font-size: 18px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+
+                        if !root.status-expanded: Text {
+                            text: root.stage-hint;
+                            color: Tok.stage-muted;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    Text {
+                        x: 12px;
+                        y: parent.height - self.height - 8px;
+                        text: root.frame-info;
+                        color: Tok.stage-muted;
+                        font-size: 12px;
+                        visible: root.has-frame && root.stage-mode == 0;
+                    }
+
+                    if root.stage-mode == 1: Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.ai-image;
+                        image-fit: contain;
+                    }
+
+                    // Frozen frame for SAM prompts: the TouchArea has exactly the Image's size,
+                    // so gui.rs maps pointer positions through the same contain letterbox.
+                    if root.stage-mode == 2: Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: root.ai-frozen-image;
+                            image-fit: contain;
+                        }
+
+                        TouchArea {
+                            property <length> start-x;
+                            property <length> start-y;
+                            property <bool> pressed-here;
+                            mouse-cursor: MouseCursor.crosshair;
+                            accessible-role: button;
+                            accessible-label: "Frozen frame picker";
+                            accessible-description: "Click to add a SAM point, or drag to draw a box. The point and box text fields in AI tools can be typed instead.";
+                            pointer-event(e) => {
+                                if e.button == PointerEventButton.left {
+                                    if e.kind == PointerEventKind.down {
+                                        self.start-x = self.mouse-x;
+                                        self.start-y = self.mouse-y;
+                                        self.pressed-here = true;
+                                    } else if e.kind == PointerEventKind.up && self.pressed-here {
+                                        self.pressed-here = false;
+                                        root.ai-pick(self.start-x / 1px, self.start-y / 1px, self.mouse-x / 1px, self.mouse-y / 1px, self.width / 1px, self.height / 1px);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        x: 12px;
+                        y: parent.height - self.height - 8px;
+                        width: parent.width - 24px;
+                        text: root.stage-caption;
+                        color: Tok.stage-muted;
+                        font-size: 12px;
+                        overflow: elide;
+                        visible: root.stage-mode != 0;
+                    }
+
+
+                    if root.recording: Rectangle {
+                        x: parent.width - self.width - 12px;
+                        y: root.prompter-show && root.script-text != "" ? parent.height * 0.5 + 8px : 10px;
+                        width: 84px;
+                        height: 20px;
+                        Rectangle {
+                            x: 0;
+                            y: 5px;
+                            width: 10px;
+                            height: 10px;
+                            border-radius: 5px;
+                            background: Tok.rec;
+                        }
+
+                        Text {
+                            x: 16px;
+                            width: parent.width - 16px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            text: root.paused ? "PAUSED" : "REC";
+                            color: Tok.stage-fg;
+                            font-weight: 600;
+                        }
+                    }
+
+                    // Teleprompter: UI-only overlay, never part of the recorded or virtual output.
+                    prompter := Rectangle {
+                        visible: root.prompter-show && root.script-text != "" && root.stage-mode != 2;
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height * 0.5;
+                        background: Tok.prompter;
+                        clip: true;
+
+                        prompt := Text {
+                            x: 28px;
+                            y: 16px - 1px * root.prompter-offset;
+                            width: parent.width - 56px;
+                            height: self.preferred-height;
+                            text: root.script-text;
+                            wrap: word-wrap;
+                            font-size: 1px * root.prompter-size;
+                            color: Tok.stage-fg;
+                        }
+
+                        TouchArea {
+                            scroll-event(e) => {
+                                root.prompter-offset = Math.max(0, root.prompter-offset - e.delta-y / 1px * 0.5);
+                                accept
+                            }
+                        }
+
+                        Button {
+                            x: parent.width - self.width - 8px;
+                            y: parent.height - self.height - 8px;
+                            text: root.prompter-playing ? "Pause script" : "Play script";
+                            clicked => {
+                                root.prompter-playing = !root.prompter-playing;
+                            }
+                        }
+                    }
+                }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button {
+                                text: root.stage-mode == 0 ? "Snapshot" : "Snapshot live"; icon: Icons.snapshot;
+                                enabled: root.previewing && root.has-frame && !root.media-busy;
+                                clicked => { root.snapshot(); }
+                            }
+                            if !root.recording: Button {
+                                text: "Record"; icon: Icons.record; primary: true;
+                                enabled: root.previewing && root.has-frame && !root.recording && !root.media-busy;
+                                clicked => { root.record(); }
+                            }
+                            if root.recording: Button {
+                                text: root.paused ? "Resume" : "Pause";
+                                icon: root.paused ? Icons.play : Icons.pause;
+                                enabled: root.recording && !root.media-busy;
+                                clicked => { root.pause-record(); }
+                            }
+                            if root.recording: Button {
+                                text: "Stop"; icon: Icons.stop; danger: true;
+                                accessible-label: "Stop recording";
+                                enabled: root.recording && !root.media-busy;
+                                clicked => { root.stop-record(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        if root.recording-note != "": Text { text: root.recording-note; color: Tok.muted; font-size: 12px; overflow: elide; }
+                        Divider { }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Icon { source: Icons.external; color: Tok.muted; width: 18px; height: 18px; }
+                            Text {
+                                text: root.devices.length == 0 ? "Connect a camera to begin." : root.previewing ? "Using Teams? Stop this preview to release the camera." : root.media-busy ? "Updating camera…" : "Preview off. This app is not holding video capture.";
+                                color: Tok.muted; font-size: 12px; wrap: word-wrap;
+                                horizontal-stretch: 1; vertical-alignment: center;
+                            }
+                        }
+            }
+                }
+
+
+                Rectangle {
+                    min-width: 340px;
+                    preferred-width: 360px;
+                    max-width: 400px;
+                    horizontal-stretch: 0;
+                    background: Tok.panel;
+                    border-radius: Tok.radius-panel;
+                    drop-shadow-color: Tok.shadow;
+                    drop-shadow-offset-y: 6px;
+                    drop-shadow-blur: 20px;
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 12px;
+                        // Fixed headings avoid stale dynamic text in the software renderer.
+                        Rectangle {
+                            height: 56px;
+                            InspectorHeading { width: parent.width; height: parent.height; visible: root.active-page == 0; title: "Camera controls"; hint: "Fine-tune the picture. Changes save automatically."; }
+                            InspectorHeading { width: parent.width; height: parent.height; visible: root.active-page == 1; title: "Profiles & views"; hint: "Keep a setup for every occasion."; }
+                            InspectorHeading { width: parent.width; height: parent.height; visible: root.active-page == 2; title: "Effects"; hint: "Your look, across preview and capture."; }
+                            InspectorHeading { width: parent.width; height: parent.height; visible: root.active-page == 3; title: "Output"; hint: "Files, audio and your virtual camera."; }
+                            InspectorHeading { width: parent.width; height: parent.height; visible: root.active-page == 4; title: "AI tools"; hint: "Optional, local and under your control."; }
+                            InspectorHeading { width: parent.width; height: parent.height; visible: root.active-page == 5; title: "Teleprompter"; hint: "Keep your words beside the lens."; }
+                            InspectorHeading { width: parent.width; height: parent.height; visible: root.active-page == 6; title: "Settings"; hint: "Make this workspace yours."; }
+                        }
+                        Divider { }
+                        Rectangle {
+                            vertical-stretch: 1;
+                            clip: true;
+                Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    visible: root.active-page == 0;
+                    ScrollView {
+                        width: parent.width; height: parent.height;
+                        content-width: self.visible-width - 16px;
+                        VerticalLayout {
+                            padding: 2px;
+                            spacing: 10px;
+                            alignment: start;
+
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Heading {
+                                    text: "Picture & framing";
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+
+                                Button {
+                                    icon: Icons.refresh; quiet: true; compact: true;
+                                    accessible-label: "Reload camera controls";
+                                    enabled: root.controls.length > 0 && !root.backend-busy;
+                                    clicked => {
+                                        root.refresh-controls();
+                                    }
+                                }
+                            }
+
+                            if root.tracking-label != "": Rectangle {
+                                background: root.tracking-tone == 1 ? Tok.accent-soft : root.tracking-tone == 3 ? Tok.error-soft : Tok.input;
+                                border-radius: Tok.radius-control;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: root.tracking-label;
+                                        color: root.tracking-tone == 3 ? Tok.error : Tok.foreground;
+                                        font-weight: 600;
+                                        wrap: word-wrap;
+                                    }
+                                    if root.tracking-detail != "": Text {
+                                        text: root.tracking-detail;
+                                        color: Tok.muted;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                            if root.controls.length == 0: Hint {
+                                text: root.controls-note;
+                            }
+                            if root.warnings != "": Text {
+                                text: root.warnings;
+                                wrap: word-wrap;
+                                font-size: 12px;
+                                color: Tok.muted;
+                            }
+                            for r[i] in root.controls: VerticalLayout {
+                                spacing: 5px;
+                                if r.heading != "": VerticalLayout {
+                                    padding-top: 16px;
+                                    Heading {
+                                        text: r.heading;
+                                    }
+                                }
+                                if r.kind == 0: NumberLine {
+                                    control: r;
+                                    editing(b) => {
+                                        root.controls-editing = b;
+                                    }
+                                    commit-text(t) => {
+                                        root.set-number(i, t);
+                                    }
+                                    commit-float(v) => {
+                                        root.set-float(i, v);
+                                    }
+                                }
+                                if r.kind == 1: ToggleLine {
+                                    control: r;
+                                    commit(b) => {
+                                        root.set-toggle(i, b);
+                                    }
+                                }
+                                if r.kind == 2: ChoiceLine {
+                                    control: r;
+                                    commit(n) => {
+                                        root.set-choice(i, n);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    visible: root.active-page == 1;
+                    ScrollView {
+                        width: parent.width; height: parent.height;
+                        content-width: self.visible-width - 16px;
+                        VerticalLayout {
+                            padding: 2px;
+                            spacing: 10px;
+                            alignment: start;
+                            Heading {
+                                text: "Profile";
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ComboBox {
+                                    model: root.profiles;
+                                    current-index <=> root.profile-index;
+                                    enabled: root.profiles.length > 0 && !root.backend-busy;
+                                    min-width: 120px;
+                                    accessible-label: "Saved profile";
+                                }
+
+                                Button {
+                                    text: "Load";
+                                    enabled: root.profiles.length > 0 && root.controls.length > 0 && !root.backend-busy;
+                                    clicked => {
+                                        root.profile-load();
+                                    }
+                                }
+
+                                Button {
+                                    text: root.delete-armed ? "Confirm" : "Delete";
+                                    danger: root.delete-armed;
+                                    compact: true;
+                                    accessible-label: root.delete-armed ? "Confirm deletion of saved profile" : "Delete saved profile";
+                                    enabled: root.profiles.length > 0 && !root.backend-busy;
+                                    clicked => {
+                                        if root.delete-armed {
+                                            root.delete-armed = false;
+                                            root.profile-delete();
+                                        } else {
+                                            root.delete-armed = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.profile-name;
+                                    placeholder-text: "New profile name";
+                                    min-width: 120px;
+                                    accessible-label: "New profile name";
+                                    accepted => {
+                                        if root.controls.length > 0 && root.profile-name != "" && !root.backend-busy { root.profile-save(); }
+                                    }
+                                }
+
+                                Button {
+                                    text: "Save current";
+                                    enabled: root.controls.length > 0 && root.profile-name != "" && !root.backend-busy;
+                                    clicked => {
+                                        root.profile-save();
+                                    }
+                                }
+                            }
+
+                            Divider { }
+                            Heading {
+                                text: "On-camera views";
+                            }
+
+                            Hint {
+                                text: "Firmware view slots. Use a profile above when your camera does not support them.";
+                            }
+
+                            if root.presets-note != "": Text {
+                                text: root.presets-note;
+                                wrap: word-wrap;
+                                font-size: 12px;
+                                color: Tok.muted;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ComboBox {
+                                    model: root.preset-list;
+                                    current-index <=> root.preset-index;
+                                    enabled: root.preset-list.length > 0 && !root.backend-busy;
+                                    min-width: 120px;
+                                    accessible-label: "Stored view";
+                                    selected => {
+                                        root.preset-delete-armed = false;
+                                    }
+                                }
+
+                                Button {
+                                    text: "Recall";
+                                    enabled: root.preset-list.length > 0 && !root.backend-busy;
+                                    clicked => {
+                                        root.preset-recall();
+                                    }
+                                }
+
+                                Button {
+                                    text: root.preset-delete-armed ? "Confirm" : "Delete";
+                                    danger: root.preset-delete-armed;
+                                    compact: true;
+                                    accessible-label: root.preset-delete-armed ? "Confirm deletion of camera view" : "Delete camera view";
+                                    enabled: root.preset-list.length > 0 && !root.backend-busy;
+                                    clicked => {
+                                        if root.preset-delete-armed {
+                                            root.preset-delete-armed = false;
+                                            root.preset-delete();
+                                        } else {
+                                            root.preset-delete-armed = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ComboBox {
+                                    model: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+                                    current-index <=> root.preset-slot;
+                                    enabled: root.presets-note == "" && !root.backend-busy;
+                                    min-width: 70px;
+                                    max-width: 90px;
+                                    accessible-label: "Slot to save into";
+                                }
+
+                                LineEdit {
+                                    text <=> root.preset-name;
+                                    enabled: root.presets-note == "" && !root.backend-busy;
+                                    placeholder-text: "View name";
+                                    min-width: 100px;
+                                    accessible-label: "View name";
+                                    accepted => {
+                                        if root.presets-note == "" && root.preset-name != "" && root.controls.length > 0 && !root.backend-busy { root.preset-save(); }
+                                    }
+                                }
+
+                                Button {
+                                    text: "Save view";
+                                    enabled: root.presets-note == "" && root.preset-name != "" && root.controls.length > 0 && !root.backend-busy;
+                                    clicked => {
+                                        root.preset-save();
+                                    }
+                                }
+                            }
+
+                            Hint {
+                                text: "Saving into a used slot replaces it.";
+                            }
+
+                            if root.has-gimbal: VerticalLayout {
+                                spacing: 6px;
+                                Divider { }
+
+                                Heading {
+                                    text: "View position";
+                                }
+
+                                Button {
+                                    text: "Center view (pan 0°, tilt 0°)";
+                                    enabled: !root.backend-busy;
+                                    clicked => {
+                                        root.recenter();
+                                    }
+                                }
+                            }
+                            if root.has-pause-areas: VerticalLayout {
+                                spacing: 6px;
+                                Divider { }
+
+                                Heading {
+                                    text: "Pause-tracking zones";
+                                }
+
+                                Hint {
+                                    text: "Up to 6 rectangles, as fractions of the frame (0–1 from the top-left). Pan and tilt are the gimbal angle where the zone was defined, in degrees. Changes take effect only after Apply zones.";
+                                }
+
+                                if root.areas-note != "": Text {
+                                    text: root.areas-note;
+                                    wrap: word-wrap;
+                                    font-size: 12px;
+                                    color: Tok.error;
+                                }
+                                for z[i] in root.pause-zones: ZoneLine {
+                                    index: i;
+                                    zone: z;
+                                    edit(field, t) => {
+                                        root.area-edit(i, field, t);
+                                    }
+                                    active(b) => {
+                                        root.area-active(i, b);
+                                    }
+                                    remove => {
+                                        root.area-remove(i);
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Button {
+                                        text: "Add zone";
+                                        enabled: root.pause-zones.length < 6;
+                                        clicked => {
+                                            root.area-add();
+                                        }
+                                    }
+
+                                    Button {
+                                        text: "Apply zones";
+                                        enabled: !root.backend-busy;
+                                        clicked => {
+                                            root.areas-apply();
+                                        }
+                                    }
+
+                                    Button {
+                                        text: "Reload";
+                                        enabled: !root.backend-busy;
+                                        clicked => {
+                                            root.areas-reload();
+                                        }
+                                    }
+                                }
+                            }
+                            if root.has-tracking-area: VerticalLayout {
+                                spacing: 6px;
+                                Divider { }
+
+                                Heading {
+                                    text: "Tracking area";
+                                }
+
+                                Hint {
+                                    text: "Pan and tilt limits, in degrees, inside which the camera may follow. Turn the area on or off with the Tracking area switch on the Camera tab.";
+                                }
+
+                                if root.tracking-note != "": Text {
+                                    text: root.tracking-note;
+                                    wrap: word-wrap;
+                                    font-size: 12px;
+                                    color: Tok.error;
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Pan";
+                                        width: 40px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    LineEdit {
+                                        text <=> root.ta-pan-min;
+                                        min-width: 70px;
+                                        placeholder-text: "min";
+                                        accessible-label: "Pan minimum";
+                                    }
+
+                                    LineEdit {
+                                        text <=> root.ta-pan-max;
+                                        min-width: 70px;
+                                        placeholder-text: "max";
+                                        accessible-label: "Pan maximum";
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Tilt";
+                                        width: 40px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    LineEdit {
+                                        text <=> root.ta-tilt-min;
+                                        min-width: 70px;
+                                        placeholder-text: "min";
+                                        accessible-label: "Tilt minimum";
+                                    }
+
+                                    LineEdit {
+                                        text <=> root.ta-tilt-max;
+                                        min-width: 70px;
+                                        placeholder-text: "max";
+                                        accessible-label: "Tilt maximum";
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Button {
+                                        text: "Apply limits";
+                                        enabled: !root.backend-busy;
+                                        clicked => {
+                                            root.tracking-apply();
+                                        }
+                                    }
+
+                                    Button {
+                                        text: "Reload";
+                                        enabled: !root.backend-busy;
+                                        clicked => {
+                                            root.tracking-reload();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    visible: root.active-page == 2;
+                    ScrollView {
+                        width: parent.width; height: parent.height;
+                        content-width: self.visible-width - 16px;
+                        VerticalLayout {
+                            padding: 2px;
+                            spacing: 12px;
+                            alignment: start;
+                            Hint {
+                                text: "Local effects run on this computer and are applied to the preview, snapshots, recordings and virtual camera output.";
+                            }
+
+                            Heading {
+                                text: "Background";
+                            }
+
+                            ComboBox {
+                                model: ["None", "Blur", "Replace with image", "Green screen (chroma key)"];
+                                current-index <=> root.fx-bg-index;
+                                accessible-label: "Background effect";
+                                selected => {
+                                    root.apply-effects();
+                                }
+                            }
+
+                            if !root.ai-enabled: Hint {
+                                text: "Blur and Replace with image use optional AI. Turn it on in Settings; Green screen needs no AI.";
+                            }
+
+                            SliderField {
+                                label: "Blur strength";
+                                readout: "\{Math.round(root.fx-blur)}";
+                                value <=> root.fx-blur;
+                                minimum: 0;
+                                maximum: 30;
+                                step: 1;
+                                default-value: 10;
+                                enabled: root.fx-bg-index == 1;
+                                released(v) => {
+                                    root.apply-effects();
+                                }
+                            }
+
+                            Text {
+                                text: "Background image (PNG or JPEG) for replacement or green screen";
+                                color: root.fx-bg-index >= 2 ? Tok.foreground : Tok.muted;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.fx-bg-image;
+                                    enabled: root.fx-bg-index >= 2;
+                                    placeholder-text: "/path/to/background.png";
+                                    accessible-label: "Replacement image path";
+                                    accepted => {
+                                        root.apply-effects();
+                                    }
+                                }
+
+                                Button {
+                                    text: "Browse…";
+                                    enabled: root.fx-bg-index >= 2;
+                                    clicked => {
+                                        root.browse(0);
+                                    }
+                                }
+                            }
+                            if root.fx-bg-index >= 2 && root.fx-bg-image == "": Hint {
+                                text: "Choose an image to activate this background. Other image controls remain active.";
+                            }
+
+                            Divider { }
+
+                            Heading {
+                                text: "Image";
+                            }
+
+                            Switch {
+                                text: "Mirror preview and output";
+                                checked <=> root.fx-mirror;
+                                toggled => {
+                                    root.apply-effects();
+                                }
+                            }
+
+                            SliderField {
+                                label: "Soften";
+                                readout: "\{Math.round(root.fx-soften * 100)} %";
+                                value <=> root.fx-soften;
+                                minimum: 0;
+                                maximum: 1;
+                                step: 0.05;
+                                default-value: 0;
+                                released(v) => {
+                                    root.apply-effects();
+                                }
+                            }
+
+                            Divider { }
+
+                            Heading {
+                                text: "Overlay image";
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.fx-overlay;
+                                    placeholder-text: "/path/to/overlay.png";
+                                    accessible-label: "Overlay image path";
+                                    accepted => {
+                                        root.apply-effects();
+                                    }
+                                }
+
+                                Button {
+                                    text: "Browse…";
+                                    clicked => {
+                                        root.browse(1);
+                                    }
+                                }
+                            }
+
+                            SliderField {
+                                label: "Overlay opacity";
+                                readout: "\{Math.round(root.fx-opacity * 100)} %";
+                                value <=> root.fx-opacity;
+                                minimum: 0;
+                                maximum: 1;
+                                step: 0.05;
+                                default-value: 1;
+                                enabled: root.fx-overlay != "";
+                                released(v) => {
+                                    root.apply-effects();
+                                }
+                            }
+
+                            Divider { }
+
+                            Heading {
+                                text: "Whiteboard correction";
+                            }
+
+                            Hint {
+                                text: "Four corners of the board as fractions of the frame, 0–1 from the top-left, in order top-left, top-right, bottom-right, bottom-left. The area is stretched to a rectangle.";
+                            }
+
+                            Switch {
+                                text: "Correct whiteboard perspective";
+                                checked <=> root.fx-board-on;
+                                toggled => {
+                                    root.apply-board();
+                                }
+                            }
+
+                            CornerRow {
+                                name: "Top-left";
+                                x-text <=> root.fx-tlx;
+                                y-text <=> root.fx-tly;
+                                commit => {
+                                    root.apply-board();
+                                }
+                            }
+
+                            CornerRow {
+                                name: "Top-right";
+                                x-text <=> root.fx-trx;
+                                y-text <=> root.fx-try;
+                                commit => {
+                                    root.apply-board();
+                                }
+                            }
+
+                            CornerRow {
+                                name: "Bottom-right";
+                                x-text <=> root.fx-brx;
+                                y-text <=> root.fx-bry;
+                                commit => {
+                                    root.apply-board();
+                                }
+                            }
+
+                            CornerRow {
+                                name: "Bottom-left";
+                                x-text <=> root.fx-blx;
+                                y-text <=> root.fx-bly;
+                                commit => {
+                                    root.apply-board();
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Button {
+                                    text: "Apply corners";
+                                    clicked => {
+                                        root.apply-board();
+                                    }
+                                }
+
+                                Button {
+                                    text: "Reset to full frame";
+                                    clicked => {
+                                        root.reset-board();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    visible: root.active-page == 3;
+                    ScrollView {
+                        width: parent.width; height: parent.height;
+                        content-width: self.visible-width - 16px;
+                        VerticalLayout {
+                            padding: 2px;
+                            spacing: 10px;
+                            alignment: start;
+                            Heading {
+                                text: "Snapshots";
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.snapshot-dir;
+                                    placeholder-text: "Folder for PNG snapshots";
+                                    accessible-label: "Snapshot folder";
+                                }
+
+                                Button {
+                                    text: "Browse…";
+                                    clicked => {
+                                        root.browse(2);
+                                    }
+                                }
+                            }
+
+                            Divider { }
+
+                            Heading {
+                                text: "Recording";
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.record-dir;
+                                    enabled: !root.recording;
+                                    placeholder-text: "Folder for recordings";
+                                    accessible-label: "Recording folder";
+                                }
+
+                                Button {
+                                    text: "Browse…";
+                                    enabled: !root.recording;
+                                    clicked => {
+                                        root.browse(3);
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: "Container";
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+
+                                ComboBox {
+                                    model: ["mkv", "mp4"];
+                                    current-index <=> root.container-index;
+                                    enabled: !root.recording;
+                                    min-width: 100px;
+                                    max-width: 160px;
+                                    accessible-label: "Recording container";
+                                }
+                            }
+
+                            Hint {
+                                text: "Files are named link-camera-0001, -0002 … and never overwrite existing files. The microphone cannot change during a recording.";
+                            }
+
+                            Divider { }
+
+                            Heading {
+                                text: "Microphone";
+                            }
+
+                            Hint {
+                                text: "Recordings use the source chosen here; No audio records video only. Mute and level act on this source in your sound server. Nothing is opened just to read its state.";
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ComboBox {
+                                    model: root.audio-sources;
+                                    current-index <=> root.audio-index;
+                                    enabled: !root.recording;
+                                    min-width: 120px;
+                                    horizontal-stretch: 1;
+                                    accessible-label: "Microphone source";
+                                    selected => {
+                                        root.audio-selected(self.current-index);
+                                    }
+                                }
+
+                                Button {
+                                    text: "Rescan";
+                                    enabled: !root.recording && !root.mic-busy;
+                                    clicked => {
+                                        root.refresh-audio();
+                                    }
+                                }
+                            }
+
+                            if root.camera-mic-note != "": Hint {
+                                text: root.camera-mic-note;
+                            }
+                            if root.camera-mic-available: Button {
+                                text: "Use the camera's microphone";
+                                enabled: !root.recording;
+                                clicked => {
+                                    root.use-camera-mic();
+                                }
+                            }
+                            if root.audio-note != "": Hint {
+                                text: root.audio-note;
+                            }
+                            if root.mic-listed: VerticalLayout {
+                                spacing: 6px;
+                                Text {
+                                    text: root.mic-title;
+                                    color: Tok.foreground;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: root.mic-detail;
+                                    color: Tok.muted;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    StatusPill { text: root.mic-state; tone: root.mic-state-tone; }
+                                    if root.mic-muted-known: StatusPill { text: root.mic-muted ? "Muted" : "Not muted"; tone: root.mic-muted ? 2 : 0; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+
+                                Switch {
+                                    text: "Mute this microphone";
+                                    checked <=> root.mic-muted;
+                                    enabled: root.mic-muted-known && !root.mic-busy;
+                                    toggled => {
+                                        root.set-mic-muted(self.checked);
+                                    }
+                                }
+
+                                SliderField {
+                                    label: "Input volume";
+                                    readout: "\{Math.round(root.mic-volume)} %";
+                                    value <=> root.mic-volume;
+                                    minimum: 0;
+                                    maximum: 100;
+                                    step: 1;
+                                    has-default: false;
+                                    unknown-note: "The sound server reports no default level for this source, so nothing was reset.";
+                                    enabled: root.mic-volume-known && !root.mic-busy;
+                                    released(v) => {
+                                        root.set-mic-volume(v);
+                                    }
+                                }
+
+                                if !root.mic-muted-known || !root.mic-volume-known: Hint {
+                                    text: "The sound server did not report mute or level for this source, so those controls stay off.";
+                                }
+                            }
+
+                            Divider { }
+
+                            Heading {
+                                text: "Virtual camera";
+                            }
+
+                            Hint {
+                                text: "Other apps such as Teams or a browser see a virtual camera as a webcam that shows this app's processed picture. Cameras created here belong to Link Camera; other v4l2loopback devices are listed but never removed.";
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ComboBox {
+                                    model: root.vcam-list;
+                                    current-index <=> root.vcam-index;
+                                    enabled: root.vcam-list.length > 0 && !root.vcam-busy;
+                                    min-width: 120px;
+                                    horizontal-stretch: 1;
+                                    accessible-label: "Virtual camera device";
+                                }
+
+                                Button {
+                                    icon: Icons.refresh;
+                                    quiet: true;
+                                    compact: true;
+                                    accessible-label: "Rescan virtual cameras";
+                                    enabled: !root.vcam-busy;
+                                    clicked => {
+                                        root.vcam-refresh();
+                                    }
+                                }
+                            }
+
+                            if root.vcam-status != "": Hint {
+                                text: root.vcam-status;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Button {
+                                    text: root.vcam-selected-active ? "Stop sending" : "Start sending";
+                                    icon: root.vcam-selected-active ? Icons.stop : Icons.play;
+                                    primary: !root.vcam-selected-active;
+                                    enabled: !root.vcam-busy && (root.vcam-selected-active || (root.previewing && root.vcam-index >= 0 && !root.media-busy));
+                                    clicked => {
+                                        root.vcam-toggle();
+                                    }
+                                }
+
+                                if root.vcam-selected-owned: Button {
+                                    text: root.vcam-remove-armed ? "Confirm remove" : "Remove";
+                                    danger: root.vcam-remove-armed;
+                                    accessible-label: root.vcam-remove-armed ? "Confirm removal of this virtual camera" : "Remove this virtual camera";
+                                    enabled: !root.vcam-busy;
+                                    clicked => {
+                                        if root.vcam-remove-armed {
+                                            root.vcam-remove-armed = false;
+                                            root.vcam-remove();
+                                        } else {
+                                            root.vcam-remove-armed = true;
+                                        }
+                                    }
+                                }
+
+                                if root.vcam-remove-armed: Button {
+                                    text: "Cancel";
+                                    quiet: true;
+                                    clicked => {
+                                        root.vcam-remove-armed = false;
+                                    }
+                                }
+                            }
+
+                            if !root.previewing && !root.vcam-selected-active: Hint {
+                                text: "Start the preview to send frames. Stopping does not need the preview.";
+                            }
+                            Text {
+                                text: "Create a new virtual camera";
+                                color: Tok.foreground;
+                                font-weight: 600;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.vcam-name;
+                                    placeholder-text: "Camera name";
+                                    min-width: 100px;
+                                    accessible-label: "New virtual camera name";
+                                    accepted => {
+                                        if root.vcam-name != "" && !root.vcam-busy { root.vcam-create(root.vcam-name); }
+                                    }
+                                }
+
+                                Button {
+                                    text: "Create";
+                                    enabled: root.vcam-name != "" && !root.vcam-busy;
+                                    clicked => {
+                                        root.vcam-create(root.vcam-name);
+                                    }
+                                }
+                            }
+
+                            Hint {
+                                text: "Creating a camera asks your system for administrator permission (a polkit prompt); loading the kernel module is a system change.";
+                            }
+
+                            Divider { }
+
+                            Text {
+                                text: "Stop everything this app outputs";
+                                color: Tok.foreground;
+                                font-weight: 600;
+                            }
+
+                            Hint {
+                                text: "Ends every virtual camera feed started by Link Camera, from this window, another window or the command line. It works without a preview, even while a create or remove is waiting for an administrator prompt, leaves the cameras installed and never touches other apps or real cameras.";
+                            }
+
+                            Button {
+                                text: root.vcam-stopping ? "Stopping…" : "Stop all Link Camera outputs";
+                                icon: Icons.stop;
+                                danger: true;
+                                enabled: !root.vcam-stopping;
+                                clicked => {
+                                    root.vcam-stop-all();
+                                }
+                            }
+
+                            if root.vcam-note != "": Text {
+                                text: root.vcam-note;
+                                wrap: word-wrap;
+                                font-size: 12px;
+                                color: root.vcam-note-error ? Tok.error : Tok.muted;
+                                accessible-role: text;
+                            }
+                            Divider { }
+
+                            Heading {
+                                text: "Remote control";
+                            }
+
+                            Hint {
+                                text: "Not started from this window. Run this in a terminal after closing the preview here (only one program should own the camera); it prints a local address and access token.";
+                            }
+
+                            LineEdit {
+                                text: root.remote-command;
+                                read-only: true;
+                                accessible-label: "Remote control command";
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    visible: root.active-page == 4;
+                    if !root.ai-enabled: VerticalLayout {
+                        width: parent.width; height: parent.height;
+                        padding: 2px;
+                        spacing: 12px;
+                        alignment: start;
+                        Heading {
+                            text: "Optional AI is off";
+                        }
+
+                        Hint {
+                            text: "Vision models and neural backgrounds are not used, nothing is downloaded and no model process starts. Turn on \"Enable optional AI features\" in Settings to use them.";
+                        }
+                        Button { text: "Open settings"; icon: Icons.chevron-right; clicked => { root.active-page = 6; } }
+                    }
+                    Rectangle {
+                        width: parent.width; height: parent.height;
+                        visible: root.ai-enabled;
+                        VerticalLayout {
+                            padding: 2px;
+                            spacing: 8px;
+                            HorizontalLayout {
+                                spacing: 5px;
+                                Button {
+                                    text: "Model"; compact: true; selected: root.ai-section == 0;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.ai-section = 0; }
+                                }
+                                Button {
+                                    text: "Analyze"; compact: true; selected: root.ai-section == 1;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.ai-section = 1; }
+                                }
+                                Button {
+                                    text: "History"; compact: true; selected: root.ai-section == 2;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.ai-section = 2; root.ai-history-browse = true; }
+                                }
+                            }
+                            if root.ai-section != 2: HorizontalLayout {
+                                spacing: 6px;
+                                ComboBox {
+                                    model: root.ai-models;
+                                    current-index <=> root.ai-model-index;
+                                    horizontal-stretch: 1;
+                                    accessible-label: "Vision model";
+                                    selected => { root.ai-select-model(self.current-index); }
+                                }
+                                Button {
+                                    icon: Icons.refresh; compact: true; quiet: true;
+                                    accessible-label: "Refresh the local model library";
+                                    enabled: root.ai-enabled && !root.ai-busy && !root.ai-lib-job;
+                                    clicked => { root.ai-refresh-library(); }
+                                }
+                            }
+                            Rectangle {
+                                vertical-stretch: 1;
+                                clip: true;
+                                Rectangle {
+                                    width: parent.width; height: parent.height;
+                                    visible: root.ai-section == 0;
+                                    ScrollView {
+                                        width: parent.width; height: parent.height;
+                                        content-width: self.visible-width - 16px;
+                                        VerticalLayout {
+                                            padding: 2px; spacing: 10px; alignment: start;
+                                            HorizontalLayout {
+                                                spacing: 6px;
+                                                StatusPill { text: root.ai-lib-state; tone: root.ai-lib-tone; }
+                                                if root.ai-lib-device != "": StatusPill { text: root.ai-lib-device; tone: 0; }
+                                                Rectangle { horizontal-stretch: 1; }
+                                            }
+                                            Heading { text: "What it does"; }
+                                            Text { text: root.ai-purpose; wrap: word-wrap; color: Tok.foreground; }
+                                            Text { text: "Best for"; font-weight: 600; color: Tok.foreground; }
+                                            Hint { text: root.ai-best-for; }
+                                            Text { text: "Outputs"; font-weight: 600; color: Tok.foreground; }
+                                            Hint { text: root.ai-outputs; }
+                                            Text { text: "Performance"; font-weight: 600; color: Tok.foreground; }
+                                            Hint { text: root.ai-performance; }
+                                            Text { text: "Limitations"; font-weight: 600; color: Tok.foreground; }
+                                            Hint { text: root.ai-limitations; }
+                                            Divider { }
+                                            Heading { text: "Local files"; }
+                                            Hint { text: root.ai-lib-disk; }
+                                            Text {
+                                                text: "License: " + root.ai-model-license;
+                                                wrap: word-wrap; font-size: 12px; color: Tok.foreground;
+                                            }
+                                            Hint { text: "Runs locally. Camera frames stay on this computer; downloads require your confirmation."; }
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                Button {
+                                                    text: root.ai-download-armed ? "Confirm download" : "Download";
+                                                    primary: root.ai-download-armed;
+                                                    accessible-label: root.ai-download-armed ? "Confirm downloading the selected model" : "Download the selected model";
+                                                    enabled: root.ai-lib-can-download && !root.ai-lib-job;
+                                                    clicked => {
+                                                        if root.ai-download-armed {
+                                                            root.ai-download-armed = false;
+                                                            root.ai-download();
+                                                        } else {
+                                                            root.ai-download-armed = true;
+                                                            root.ai-delete-armed = false;
+                                                        }
+                                                    }
+                                                }
+
+                                                Button {
+                                                    text: root.ai-delete-armed ? "Confirm delete" : "Delete";
+                                                    danger: root.ai-delete-armed;
+                                                    accessible-label: root.ai-delete-armed ? "Confirm deleting the selected model from this computer" : "Delete the selected model from this computer";
+                                                    enabled: root.ai-lib-can-delete && !root.ai-lib-job;
+                                                    clicked => {
+                                                        if root.ai-delete-armed {
+                                                            root.ai-delete-armed = false;
+                                                            root.ai-delete();
+                                                        } else {
+                                                            root.ai-delete-armed = true;
+                                                            root.ai-download-armed = false;
+                                                        }
+                                                    }
+                                                }
+
+                                            }
+                                            if root.ai-download-armed || root.ai-delete-armed: Button {
+                                                text: "Cancel"; quiet: true; compact: true;
+                                                clicked => {
+                                                    root.ai-download-armed = false;
+                                                    root.ai-delete-armed = false;
+                                                }
+                                            }
+                                            if root.ai-lib-job && root.ai-lib-can-cancel: Button {
+                                                text: "Stop download"; danger: true;
+                                                clicked => { root.ai-cancel-download(); }
+                                            }
+
+                                            if root.ai-download-armed: Hint {
+                                                text: "Confirming fetches the model runtime and weights over the network once; the size and license are listed above. Models stay on this computer until you delete them.";
+                                            }
+                                            if root.ai-delete-armed: Hint {
+                                                text: "Confirming removes this model's files from this computer. It can be downloaded again later.";
+                                            }
+                                            if root.ai-lib-job: Text {
+                                                text: root.ai-lib-job-note;
+                                                wrap: word-wrap;
+                                                font-size: 12px;
+                                                color: Tok.foreground;
+                                                accessible-role: text;
+                                            }
+                                            if root.ai-lib-note != "": Text {
+                                                text: root.ai-lib-note;
+                                                wrap: word-wrap;
+                                                font-size: 12px;
+                                                color: root.ai-lib-note-error ? Tok.error : Tok.muted;
+                                                accessible-role: text;
+                                            }
+                                            Button {
+                                                text: root.ai-details-expanded ? "Hide source details" : "Source and file details";
+                                                compact: true; quiet: true;
+                                                clicked => { root.ai-details-expanded = !root.ai-details-expanded; }
+                                            }
+                                            if root.ai-details-expanded: Hint { text: root.ai-model-info; }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    width: parent.width; height: parent.height;
+                                    visible: root.ai-section == 1;
+                                    ScrollView {
+                                        width: parent.width; height: parent.height;
+                                        content-width: self.visible-width - 16px;
+                                        VerticalLayout {
+                                            padding: 2px; spacing: 10px; alignment: start;
+                                            Heading { text: "Analyze"; }
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                Button {
+                                                    text: "Run once";
+                                                    primary: true;
+                                                    enabled: root.ai-can-run;
+                                                    clicked => {
+                                                        root.ai-run();
+                                                    }
+                                                }
+
+                                                Button {
+                                                    text: root.ai-stopping ? "Stopping…" : "Stop";
+                                                    enabled: root.ai-can-stop;
+                                                    clicked => {
+                                                        root.ai-stop();
+                                                    }
+                                                }
+                                            }
+
+                                            Switch {
+                                                text: "Live analysis";
+                                                checked <=> root.ai-live;
+                                                enabled: root.ai-ready;
+                                                toggled => {
+                                                    root.ai-live-toggled(self.checked);
+                                                }
+                                            }
+
+                                            SliderField {
+                                                label: "Minimum gap between live runs";
+                                                readout: "\{Math.round(root.ai-interval * 1000)} ms";
+                                                value <=> root.ai-interval;
+                                                minimum: 0;
+                                                maximum: 10;
+                                                step: 0.01;
+                                                default-value: root.ai-def.interval;
+                                            }
+
+                                            Hint {
+                                                text: root.ai-interval-note;
+                                            }
+
+                                            ScrollView {
+                                                height: 34px;
+                                                content-width: self.visible-width - 16px;
+                                                VerticalLayout {
+                                                    alignment: start;
+                                                    Text {
+                                                        text: root.ai-run-hint;
+                                                        wrap: word-wrap;
+                                                        font-size: 12px;
+                                                        color: Tok.muted;
+                                                        accessible-role: text;
+                                                        accessible-label: "Analysis availability";
+                                                    }
+                                                }
+                                            }
+                                            if !root.ai-note-error: ScrollView {
+                                                height: 34px;
+                                                content-width: self.visible-width - 16px;
+                                                VerticalLayout {
+                                                    alignment: start;
+                                                    Text {
+                                                        text: root.ai-note;
+                                                        wrap: word-wrap; font-size: 12px;
+                                                        color: Tok.foreground;
+                                                        accessible-role: text;
+                                                        accessible-label: "Analysis status";
+                                                    }
+                                                }
+                                            }
+                                            if root.ai-note-error: Text {
+                                                text: root.ai-note;
+                                                wrap: word-wrap; font-size: 12px;
+                                                color: Tok.error;
+                                                accessible-role: text;
+                                                accessible-label: "Analysis error";
+                                            }
+                                            Divider { }
+                                            Text { text: "Show on the stage"; color: Tok.foreground; }
+                                            ComboBox {
+                                                model: ["Live camera", "Analysis result", "Frozen frame"];
+                                                current-index <=> root.stage-mode;
+                                                accessible-label: "Stage view";
+                                                selected => { root.ai-set-stage(self.current-index); }
+                                            }
+                                            Hint { text: "Results stay matched to their source frame. Open History to browse older results or inspect the complete raw response."; }
+                                            Divider { }
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                Heading {
+                                                    text: "Options";
+                                                    vertical-alignment: center;
+                                                    horizontal-stretch: 1;
+                                                }
+
+                                                Button {
+                                                    text: "Reset options";
+                                                    clicked => {
+                                                        root.ai-defaults();
+                                                    }
+                                                }
+                                            }
+
+                                            if root.ai-kind <= 1: VerticalLayout {
+                                                spacing: 6px;
+                                                SliderField {
+                                                    label: "Maximum results";
+                                                    readout: "\{Math.round(root.ai-max-results)}";
+                                                    value <=> root.ai-max-results;
+                                                    minimum: 1;
+                                                    maximum: 10;
+                                                    step: 1;
+                                                    default-value: root.ai-def.max-results;
+                                                }
+
+                                                SliderField {
+                                                    label: "Minimum confidence";
+                                                    readout: "\{Math.round(root.ai-min-conf * 100) / 100}";
+                                                    value <=> root.ai-min-conf;
+                                                    minimum: 0.1;
+                                                    maximum: 0.9;
+                                                    step: 0.05;
+                                                    default-value: root.ai-def.min-conf;
+                                                }
+
+                                                if root.ai-kind == 1: Switch {
+                                                    text: "Face blendshapes (expression scores)";
+                                                    checked <=> root.ai-blend;
+                                                }
+                                            }
+
+                                            if root.ai-kind == 2: VerticalLayout {
+                                                spacing: 6px;
+                                                SliderField {
+                                                    label: "Score threshold";
+                                                    readout: "\{Math.round(root.ai-threshold * 100) / 100}";
+                                                    value <=> root.ai-threshold;
+                                                    minimum: 0;
+                                                    maximum: 1;
+                                                    step: 0.05;
+                                                    default-value: root.ai-def.threshold;
+                                                }
+
+                                                SliderField {
+                                                    label: "Keep at most detections";
+                                                    readout: "\{Math.round(root.ai-top-k)}";
+                                                    value <=> root.ai-top-k;
+                                                    minimum: 1;
+                                                    maximum: 300;
+                                                    step: 1;
+                                                    default-value: root.ai-def.top-k;
+                                                }
+                                            }
+
+                                            if root.ai-kind == 3: VerticalLayout {
+                                                spacing: 6px;
+                                                Text {
+                                                    text: "Florence-2 task";
+                                                }
+
+                                                ComboBox {
+                                                    model: ["Caption the image", "Detect objects", "Read text (OCR)", "Propose regions"];
+                                                    current-index <=> root.ai-task-index;
+                                                    accessible-label: "Florence-2 task";
+                                                }
+                                            }
+
+                                            if root.ai-kind == 4: VerticalLayout {
+                                                spacing: 6px;
+                                                Hint {
+                                                    text: "Segment Anything marks one object. Points are positive: they sit on the object. Coordinates are pixels of the analyzed image from its top-left corner. With no point or box the object at the image centre is segmented. The result is the outline of the largest region, not a full mask.";
+                                                }
+
+                                                Text {
+                                                    text: root.ai-frozen-note;
+                                                    wrap: word-wrap;
+                                                    font-size: 12px;
+                                                    color: Tok.muted;
+                                                }
+
+                                                HorizontalLayout {
+                                                    spacing: 8px;
+                                                    Button {
+                                                        text: "Freeze frame";
+                                                        compact: true;
+                                                        accessible-label: "Freeze the current camera frame for SAM";
+                                                        enabled: root.previewing && root.has-frame;
+                                                        clicked => {
+                                                            root.ai-freeze();
+                                                        }
+                                                    }
+
+                                                    Button {
+                                                        text: "Discard frame";
+                                                        compact: true;
+                                                        accessible-label: "Discard the frozen SAM source frame";
+                                                        enabled: root.ai-frozen;
+                                                        clicked => {
+                                                            root.ai-unfreeze();
+                                                        }
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: "Pointer on the frozen frame";
+                                                }
+
+                                                ComboBox {
+                                                    model: ["Click adds a point", "Drag draws a box"];
+                                                    current-index <=> root.ai-pick-mode;
+                                                    enabled: root.ai-frozen;
+                                                    accessible-label: "Frozen frame pointer action";
+                                                }
+
+                                                Text {
+                                                    text: "Points, up to 16: x,y; x,y";
+                                                }
+
+                                                LineEdit {
+                                                    text <=> root.ai-points;
+                                                    placeholder-text: "320,240; 400,260";
+                                                    accessible-label: "SAM points";
+                                                    edited(t) => {
+                                                        root.ai-prompts-edited();
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: "Box: x1,y1,x2,y2";
+                                                }
+
+                                                LineEdit {
+                                                    text <=> root.ai-box;
+                                                    placeholder-text: "100,80,400,320";
+                                                    accessible-label: "SAM box";
+                                                    edited(t) => {
+                                                        root.ai-prompts-edited();
+                                                    }
+                                                }
+
+                                                Switch {
+                                                    text: "Offer three candidate masks";
+                                                    checked <=> root.ai-multimask;
+                                                }
+                                                Button {
+                                                    text: "Clear points and box";
+                                                    compact: true;
+                                                    clicked => { root.ai-clear-prompts(); }
+                                                }
+                                            }
+
+                                            if root.ai-kind >= 5: VerticalLayout {
+                                                spacing: 6px;
+                                                Text {
+                                                    text: "Depth map colors";
+                                                }
+
+                                                ComboBox {
+                                                    model: ["Grayscale", "Inferno"];
+                                                    current-index <=> root.ai-colormap-index;
+                                                    accessible-label: "Depth colormap";
+                                                }
+
+                                                if root.ai-kind == 6: VerticalLayout {
+                                                    spacing: 6px;
+                                                    SliderField {
+                                                        label: "Denoising steps";
+                                                        readout: "\{Math.round(root.ai-steps)}";
+                                                        value <=> root.ai-steps;
+                                                        minimum: 1;
+                                                        maximum: 10;
+                                                        step: 1;
+                                                        default-value: root.ai-def.steps;
+                                                    }
+
+                                                    SliderField {
+                                                        label: "Ensemble size";
+                                                        readout: "\{Math.round(root.ai-ensemble)}";
+                                                        value <=> root.ai-ensemble;
+                                                        minimum: 1;
+                                                        maximum: 5;
+                                                        step: 1;
+                                                        default-value: root.ai-def.ensemble;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    width: parent.width; height: parent.height;
+                                    visible: root.ai-section == 2;
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            Rectangle {
+                                                horizontal-stretch: 1; min-height: 32px;
+                                                Switch {
+                                                    width: parent.width; height: parent.height;
+                                                    visible: !root.ai-history-clear-armed;
+                                                    text: "Follow latest";
+                                                    checked: root.ai-history-follow;
+                                                    toggled => {
+                                                        root.ai-history-follow-toggled(self.checked);
+                                                        if self.checked { history-list.content-y = 0px; }
+                                                    }
+                                                }
+                                                Button {
+                                                    width: parent.width; height: parent.height;
+                                                    visible: root.ai-history-clear-armed;
+                                                    text: "Keep history"; compact: true; quiet: true;
+                                                    accessible-label: "Cancel clearing session history";
+                                                    clicked => { root.ai-history-clear-armed = false; }
+                                                }
+                                            }
+                                            Button {
+                                                text: root.ai-history-clear-armed ? "Confirm clear" : "Clear";
+                                                compact: true; danger: root.ai-history-clear-armed;
+                                                enabled: root.ai-history-count > 0 || root.ai-has-result;
+                                                accessible-label: root.ai-history-clear-armed ? "Confirm clearing all session results" : "Clear session result history";
+                                                clicked => {
+                                                    if root.ai-history-clear-armed {
+                                                        root.ai-history-clear-armed = false;
+                                                        root.ai-history-clear();
+                                                    } else {
+                                                        root.ai-history-clear-armed = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            text: root.ai-history-clear-armed ? "Clear session history? Exports stay." : "\{root.ai-history-count}/100 · all models · " + root.ai-history-memory + " RAM";
+                                            color: Tok.muted; font-size: 12px; overflow: elide;
+                                            accessible-description: "Session-only history. Losslessly compressed frames and complete raw outputs: " + root.ai-history-memory;
+                                        }
+                                        ScrollView {
+                                            height: 34px;
+                                            content-width: self.visible-width - 16px;
+                                            VerticalLayout {
+                                                alignment: start;
+                                                Text {
+                                                    text: root.ai-history-loading ? "Loading selection; previous result remains visible. " + root.ai-result-info : root.ai-result-info;
+                                                    wrap: word-wrap;
+                                                    font-size: 12px; color: Tok.muted;
+                                                    accessible-role: text;
+                                                }
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            Button {
+                                                text: "Browse"; compact: true; selected: root.ai-history-browse;
+                                                horizontal-stretch: 1;
+                                                clicked => { root.ai-history-browse = true; }
+                                            }
+                                            Button {
+                                                text: "Render"; compact: true; selected: !root.ai-history-browse && !root.ai-history-raw;
+                                                horizontal-stretch: 1;
+                                                clicked => {
+                                                    root.ai-history-browse = false;
+                                                    root.ai-history-raw = false;
+                                                    root.ai-history-raw-toggled(false);
+                                                }
+                                            }
+                                            Button {
+                                                text: "Raw"; compact: true; selected: !root.ai-history-browse && root.ai-history-raw;
+                                                horizontal-stretch: 1;
+                                                clicked => {
+                                                    root.ai-history-browse = false;
+                                                    root.ai-history-raw = true;
+                                                    root.ai-history-raw-toggled(true);
+                                                }
+                                            }
+                                        }
+                                        Rectangle {
+                                            vertical-stretch: 1; min-height: 48px; clip: true;
+                                            history-list := ScrollView {
+                                                width: parent.width; height: parent.height;
+                                                visible: root.ai-history-browse;
+                                                content-width: self.visible-width - 16px;
+                                                accessible-role: list;
+                                                accessible-label: "Recent analysis results, newest first";
+                                                changed content-y => {
+                                                    if self.content-y < 0px && root.ai-history-follow {
+                                                        root.ai-history-follow-toggled(false);
+                                                    }
+                                                }
+                                                VerticalLayout {
+                                                    spacing: 2px; alignment: start;
+                                                    for entry in root.ai-history: Rectangle {
+                                                        height: 52px;
+                                                        Button {
+                                                            width: parent.width; height: parent.height;
+                                                            selected: root.ai-history-selected == entry.token;
+                                                            accessible-checkable: true;
+                                                            accessible-checked: root.ai-history-selected == entry.token;
+                                                            accessible-label: entry.title + ". " + entry.detail;
+                                                            clicked => {
+                                                                root.ai-select-history(entry.token);
+                                                                root.ai-history-browse = false;
+                                                            }
+                                                        }
+                                                        VerticalLayout {
+                                                            padding-left: 12px; padding-right: 12px;
+                                                            padding-top: 7px; padding-bottom: 7px; spacing: 3px;
+                                                            Text {
+                                                                text: (root.ai-history-selected == entry.token ? "Viewing: " : "") + entry.title;
+                                                                font-size: 13px; font-weight: 600;
+                                                                color: Tok.foreground; overflow: elide; accessible-role: none;
+                                                            }
+                                                            Text {
+                                                                text: entry.detail; font-size: 12px;
+                                                                color: Tok.muted; overflow: elide; accessible-role: none;
+                                                            }
+                                                        }
+                                                    }
+                                                    if root.ai-history-count == 0: Hint {
+                                                        text: "No session results yet. Choose a model, then Run once or enable Live in Analyze.";
+                                                    }
+                                                }
+                                            }
+                                            ScrollView {
+                                                width: parent.width; height: parent.height;
+                                                visible: !root.ai-history-browse && !root.ai-history-raw;
+                                                content-width: self.visible-width - 16px;
+                                                VerticalLayout {
+                                                    padding: 2px; spacing: 8px; alignment: start;
+                                                    Rectangle {
+                                                        height: 160px; background: Tok.stage;
+                                                        Image {
+                                                            width: parent.width; height: parent.height;
+                                                            source: root.ai-image; image-fit: contain;
+                                                            visible: root.ai-has-result;
+                                                        }
+                                                        Text {
+                                                            width: parent.width - 24px; x: 12px; y: 12px;
+                                                            visible: !root.ai-has-result;
+                                                            text: "Select a result to view its frame-matched render.";
+                                                            color: Tok.stage-fg; wrap: word-wrap;
+                                                        }
+                                                    }
+                                                    Switch {
+                                                        text: "Show source frame";
+                                                        checked <=> root.ai-show-source;
+                                                        enabled: root.ai-has-result;
+                                                        toggled => { root.ai-source-toggled(self.checked); }
+                                                    }
+                                                    Text { text: "Summary"; font-weight: 600; color: Tok.foreground; }
+                                                    TextEdit {
+                                                        text: root.ai-text; read-only: true; height: 90px;
+                                                        accessible-label: "Selected analysis summary";
+                                                        changed has-focus => {
+                                                            if self.has-focus { root.ai-history-follow-toggled(false); }
+                                                        }
+                                                    }
+                                                    Divider { }
+                                                    Heading { text: "Save selected result"; }
+                                                    HorizontalLayout {
+                                                        spacing: 8px;
+                                                        LineEdit {
+                                                            text <=> root.ai-out-dir;
+                                                            placeholder-text: "Folder for AI results";
+                                                            accessible-label: "AI result folder";
+                                                        }
+
+                                                        Button {
+                                                            text: "Browse…";
+                                                            clicked => {
+                                                                root.browse(5);
+                                                            }
+                                                        }
+                                                    }
+
+                                                    HorizontalLayout {
+                                                        spacing: 8px;
+                                                        Button {
+                                                            text: "Save JSON";
+                                                            compact: true;
+                                                            accessible-label: "Save the raw model result as JSON";
+                                                            enabled: root.ai-has-result && !root.ai-saving && !root.ai-history-loading;
+                                                            clicked => {
+                                                                root.ai-save-raw();
+                                                            }
+                                                        }
+
+                                                        Button {
+                                                            text: "Save PNG";
+                                                            compact: true;
+                                                            accessible-label: "Save the frame-matched annotated image as PNG";
+                                                            enabled: root.ai-has-result && !root.ai-saving && !root.ai-history-loading;
+                                                            clicked => {
+                                                                root.ai-save-visual();
+                                                            }
+                                                        }
+                                                    }
+
+                                                    Hint {
+                                                        text: "Files are named link-camera-<model>-0001 and never overwrite existing files. Depth models save their PNG as the raw result.";
+                                                    }
+                                                }
+                                            }
+                                            TextEdit {
+                                                width: parent.width; height: parent.height;
+                                                visible: !root.ai-history-browse && root.ai-history-raw;
+                                                text: root.ai-raw; read-only: true;
+                                                accessible-label: "Complete raw API result for the selected frame";
+                                                changed has-focus => {
+                                                    if self.has-focus { root.ai-history-follow-toggled(false); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    visible: root.active-page == 5;
+                    ScrollView {
+                        width: parent.width; height: parent.height;
+                        content-width: self.visible-width - 16px;
+                    VerticalLayout {
+                        padding: 2px;
+                        spacing: 10px;
+                        TextEdit {
+                            text <=> root.script-text;
+                            placeholder-text: "Type or paste your script here. It is saved automatically on this computer.";
+                            min-height: 160px;
+                            vertical-stretch: 1;
+                            accessible-label: "Teleprompter script";
+                            edited(t) => {
+                                root.prompter-offset = 0;
+                                root.script-edited();
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button {
+                                text: root.prompter-playing ? "Pause" : "Play";
+                                compact: true;
+                                primary: !root.prompter-playing;
+                                enabled: root.script-text != "" && root.prompter-show && root.stage-mode != 2;
+                                clicked => {
+                                    root.prompter-playing = !root.prompter-playing;
+                                }
+                            }
+
+                            Button {
+                                text: "Restart";
+                                compact: true;
+                                enabled: root.script-text != "";
+                                clicked => {
+                                    root.prompter-offset = 0;
+                                }
+                            }
+
+                            Switch {
+                                text: "Show over preview";
+                                checked <=> root.prompter-show;
+                                toggled => {
+                                    if !self.checked {
+                                        root.prompter-playing = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        SliderField {
+                            label: "Speed";
+                            readout: "\{Math.round(root.prompter-speed)} px/s";
+                            value <=> root.prompter-speed;
+                            minimum: 10;
+                            maximum: 300;
+                            step: 5;
+                            default-value: 60;
+                        }
+
+                        SliderField {
+                            label: "Text size";
+                            readout: "\{Math.round(root.prompter-size)} px";
+                            value <=> root.prompter-size;
+                            minimum: 20;
+                            maximum: 96;
+                            step: 2;
+                            default-value: 40;
+                        }
+
+                        SliderField {
+                            label: "Position";
+                            readout: "\{Math.round(root.prompter-offset)} px";
+                            value <=> root.prompter-offset;
+                            minimum: 0;
+                            maximum: Math.max(1, prompt.height / 1px);
+                            step: 20;
+                            default-value: 0;
+                        }
+
+                        Divider { }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            LineEdit {
+                                text <=> root.script-path;
+                                placeholder-text: "/path/to/script.txt";
+                                accessible-label: "Script file path";
+                            }
+
+                            Button {
+                                text: "Browse…";
+                                clicked => {
+                                    root.browse(4);
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button {
+                                text: "Load file";
+                                enabled: root.script-path != "";
+                                clicked => {
+                                    root.script-load();
+                                }
+                            }
+
+                            Button {
+                                text: "Save to file";
+                                enabled: root.script-path != "";
+                                clicked => {
+                                    root.script-save();
+                                }
+                            }
+                        }
+
+                        Hint {
+                            text: "The prompter is shown only in this window; it is not part of recordings, snapshots or the virtual camera.";
+                        }
+                    }
+                }
+                }
+
+                Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    visible: root.active-page == 6;
+                    ScrollView {
+                        width: parent.width; height: parent.height;
+                        content-width: self.visible-width - 16px;
+                        VerticalLayout {
+                            padding: 2px;
+                            spacing: 10px;
+                            alignment: start;
+                            Text {
+                                text: root.device-info;
+                                color: Tok.muted;
+                                wrap: word-wrap;
+                            }
+                            Heading {
+                                text: "Camera";
+                            }
+
+                            Hint {
+                                text: "Camera controls are saved automatically and restored for this camera, including when other apps such as Teams start using it. This app also remembers its preview format and local effects. Press Stop preview before using the physical camera in another app.";
+                            }
+
+                            Hint {
+                                text: "Effects made by this app (mirror, softening, backgrounds, overlays) only reach other apps through a virtual camera. The camera's own settings (HDR, framing, tracking, zoom) work without one.";
+                            }
+
+                            Divider { }
+
+                            Heading {
+                                text: "Optional AI";
+                            }
+
+                            Switch {
+                                text: "Enable optional AI features";
+                                checked <=> root.ai-enabled;
+                                accessible-description: "Turns on AI tools and neural person blur and background replacement. Off by default.";
+                                toggled => {
+                                    root.ai-enabled-toggled(self.checked);
+                                }
+                            }
+
+                            Hint {
+                                text: "Off by default and saved on this computer. Enabling lets AI tools list and run models that are already on this computer, and allows neural Blur/Replace effects; it contacts no network. Models download only when you confirm in AI tools. Disabling stops analysis at once and turns off neural backgrounds. The camera's own HDR and framing are independent.";
+                            }
+
+                            if root.settings-note != "": Text {
+                                text: root.settings-note;
+                                wrap: word-wrap;
+                                font-size: 12px;
+                                color: root.settings-error ? Tok.error : Tok.foreground;
+                                accessible-role: text;
+                            }
+                        }
+                    }
+                }
+            }
+                    }
+                }
+        }
+
+            Rectangle {
+                visible: root.status-text != "" || root.media-busy || root.backend-busy;
+                background: root.status-error ? Tok.error-soft : Tok.panel;
+                border-radius: 16px;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text {
+                            text: root.status-text != "" ? root.status-text : "Updating camera…";
+                            color: root.status-error ? Tok.error : Tok.foreground;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            overflow: elide;
+                            height: 34px;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            accessible-role: text;
+                            accessible-description: root.status-text;
+                        }
+                        Text { text: root.media-busy || root.backend-busy ? "Busy" : ""; color: Tok.muted; vertical-alignment: center; font-size: 12px; }
+                        Button { text: root.status-expanded ? "Less" : "Details"; compact: true; quiet: true; visible: root.status-error; clicked => { root.status-expanded = !root.status-expanded; } }
+                        Button { icon: Icons.check; compact: true; quiet: true; visible: root.status-text != ""; accessible-label: "Dismiss status"; clicked => { root.dismiss-status(); } }
+                    }
+                    if root.status-expanded && root.status-error: TextEdit {
+                        text: root.status-text;
+                        read-only: true;
+                        height: 110px;
+                        accessible-label: "Full operation details";
+                    }
+                }
+            }
+    }
+    }
+}

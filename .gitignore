@@ -1,0 +1,90 @@
+/target/
+/.local/
+*.exe
+/case/extracted/
+/case/qt-resources/
+/case/strings/
+/case/triage/
+/case/extraction-evidence/
+/.signet/preflight.json
+
+# --- added by github-ready ---
+# --- base ---
+*~
+*.swp
+*.swo
+*.bak
+*.orig
+*.rej
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+.directory
+.Trash-*
+tmp/
+temp/
+.cache/
+# --- secrets ---
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+!public*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.netrc
+.npmrc
+.pypirc
+.htpasswd
+credentials.json
+service-account*.json
+client_secret*.json
+secrets.yml
+secrets.yaml
+secrets.json
+*.kdbx
+*.ovpn
+kubeconfig
+.aws/
+.ssh/
+# --- python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+ENV/
+.tox/
+.nox/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+.python-version
+# --- rust ---
+**/*.rs.bk
+*.pdb
+
+# --- not part of the published controller ---
+# Vendor installer, extracted binaries, strings dumps and local investigation notes.
+/case/
+# Local agent state.
+/.omp/
+/.signet/

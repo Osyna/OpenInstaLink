@@ -1,0 +1,708 @@
+// Link Camera design kit: light ivory/mint palette, shared tokens, Button and Icon primitives.
+// Self-contained: imports nothing from app.slint. Icons are authored SVGs in assets/icons.
+
+export global Tok {
+    out property <bool> is-dark: false;
+
+    // surfaces
+    out property <color> canvas: #eef1ec;
+    out property <color> panel: #fafbf8;
+    out property <color> elevated: #ffffff;
+    out property <color> input: #f1f4ee;
+    out property <color> rule: #dde3dc;
+    out property <color> rule-strong: #c4cfc7;
+
+    // text (foreground 12.3:1 and muted 5.2:1 on panel)
+    out property <color> foreground: #233630;
+    out property <color> muted: #5e6e66;
+
+    // brand
+    out property <color> accent: #25483b;
+    out property <color> accent-hover: #2f5a4b;
+    out property <color> accent-press: #1a352b;
+    out property <color> accent-fg: #ffffff;
+    out property <color> accent-soft: #d5eee0;
+    out property <color> cyan-soft: #dceff1;
+    out property <color> focus: #17859b;
+
+    // status
+    out property <color> error: #a8071a;
+    out property <color> error-soft: #fbe5e2;
+    out property <color> rec: #b3261e;
+
+    // disabled controls: legible but clearly inactive
+    out property <color> disabled-bg: #e4e9e2;
+    out property <color> disabled-fg: #74837b;
+
+    // dark camera stage stays neutral in the light shell
+    out property <color> stage: #14161a;
+    out property <color> stage-fg: #e2e5ea;
+    out property <color> stage-muted: #a9b0ba;
+    out property <color> prompter: #0c0d10d6;
+
+    out property <color> shadow: #1f2f2a22;
+
+    // geometry and type
+    out property <length> radius-panel: 26px;
+    out property <length> radius-card: 18px;
+    out property <length> radius-control: 12px;
+    out property <length> fs-body: 14px;
+    out property <length> fs-small: 12px;
+    out property <length> fs-section: 18px;
+    out property <length> fs-title: 28px;
+}
+
+export global Icons {
+    out property <image> camera: @image-url("../assets/icons/camera.svg");
+    out property <image> sliders: @image-url("../assets/icons/sliders.svg");
+    out property <image> effects: @image-url("../assets/icons/effects.svg");
+    out property <image> frame: @image-url("../assets/icons/frame.svg");
+    out property <image> output: @image-url("../assets/icons/output.svg");
+    out property <image> script: @image-url("../assets/icons/script.svg");
+    out property <image> sparkles: @image-url("../assets/icons/sparkles.svg");
+    out property <image> settings: @image-url("../assets/icons/settings.svg");
+    out property <image> refresh: @image-url("../assets/icons/refresh.svg");
+    out property <image> reset: @image-url("../assets/icons/reset.svg");
+    out property <image> snapshot: @image-url("../assets/icons/snapshot.svg");
+    out property <image> record: @image-url("../assets/icons/record.svg");
+    out property <image> stop: @image-url("../assets/icons/stop.svg");
+    out property <image> play: @image-url("../assets/icons/play.svg");
+    out property <image> pause: @image-url("../assets/icons/pause.svg");
+    out property <image> external: @image-url("../assets/icons/external.svg");
+    out property <image> check: @image-url("../assets/icons/check.svg");
+    out property <image> chevron-right: @image-url("../assets/icons/chevron-right.svg");
+    out property <image> link-logo: @image-url("../assets/icons/link-logo.svg");
+}
+
+// Decorative tinted glyph; hidden from assistive technology (the owner supplies the label).
+export component Icon inherits Image {
+    in property <color> color: Tok.foreground;
+    width: 22px;
+    height: 22px;
+    image-fit: contain;
+    colorize: root.color;
+    accessible-role: none;
+}
+
+// Variants, highest priority first: danger+primary (solid red), danger (soft red), primary
+// (evergreen), selected (mint, for nav), quiet (flat), default (white with hairline).
+export component Button {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> primary;
+    in property <bool> quiet;
+    in property <bool> danger;
+    in property <bool> selected;
+    in property <bool> compact;
+    // Vertical icon-over-label tile for the navigation rail (quiet unless selected).
+    in property <bool> nav;
+    in property <length> icon-size: root.compact ? 18px : 20px;
+    in property <bool> enabled <=> i-touch-area.enabled;
+    out property <bool> has-focus: i-focus-scope.has-focus;
+    out property <bool> pressed: self.enabled && (i-touch-area.pressed || root.key-down);
+
+    callback clicked;
+
+    private property <bool> key-down;
+    private property <int> kind: root.danger ? (root.primary ? 3 : 2) : root.primary ? 1 : root.selected ? 4 : (root.quiet || root.nav) ? 5 : 0;
+    private property <bool> hovering: root.enabled && i-touch-area.has-hover;
+    private property <color> base: root.kind == 1 ? Tok.accent
+        : root.kind == 2 ? Tok.error-soft
+        : root.kind == 3 ? Tok.error
+        : root.kind == 4 ? Tok.accent-soft
+        : root.kind == 5 ? transparent
+        : Tok.elevated;
+    private property <color> fg: !root.enabled ? Tok.disabled-fg
+        : (root.kind == 1 || root.kind == 3) ? Tok.accent-fg
+        : root.kind == 2 ? Tok.error
+        : root.kind == 4 ? Tok.accent
+        : Tok.foreground;
+    private property <color> fill: !root.enabled ? (root.kind == 5 ? transparent : Tok.disabled-bg)
+        : root.pressed ? (root.kind == 1 ? Tok.accent-press
+            : root.kind == 5 ? Tok.foreground.with-alpha(0.12)
+            : root.base.mix(Tok.foreground, 0.86))
+        : root.hovering ? (root.kind == 1 ? Tok.accent-hover
+            : root.kind == 5 ? Tok.foreground.with-alpha(0.07)
+            : root.base.mix(Tok.foreground, 0.94))
+        : root.base;
+    private property <color> edge: !root.enabled ? (root.kind == 5 ? transparent : Tok.rule)
+        : root.kind == 0 ? Tok.rule-strong
+        : root.kind == 2 ? Tok.error.with-alpha(0.4)
+        : root.kind == 4 ? Tok.accent.with-alpha(0.22)
+        : transparent;
+    private property <bool> lifted: root.enabled && !root.compact && !root.pressed && (root.kind == 0 || root.kind == 1 || root.kind == 3);
+
+    min-width: root.nav ? 60px : i-layout.min-width;
+    preferred-width: root.nav ? 60px : i-layout.preferred-width;
+    min-height: root.nav ? 56px : root.compact ? 32px : 40px;
+    preferred-height: root.nav ? 56px : root.compact ? 32px : 40px;
+    max-height: root.nav ? 56px : root.compact ? 32px : 40px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    forward-focus: i-focus-scope;
+
+    accessible-role: button;
+    accessible-enabled: root.enabled;
+    accessible-checkable: root.nav;
+    accessible-checked: root.selected;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if (root.enabled) {
+            i-focus-scope.focus();
+            root.clicked();
+        }
+    }
+
+    Rectangle {
+        border-radius: Tok.radius-control;
+        background: root.fill;
+        border-width: 1px;
+        border-color: root.edge;
+        drop-shadow-color: root.lifted ? Tok.shadow : transparent;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-blur: 4px;
+
+        i-layout := HorizontalLayout {
+            padding-left: root.compact ? 12px : 16px;
+            padding-right: root.compact ? 12px : 16px;
+            spacing: 8px;
+            alignment: center;
+
+            if !root.nav && root.icon.width > 0 && root.icon.height > 0: Image {
+                source: root.icon;
+                width: root.icon-size;
+                image-fit: contain;
+                colorize: root.fg;
+                accessible-role: none;
+            }
+
+            if !root.nav && root.text != "": Text {
+                text: root.text;
+                color: root.fg;
+                font-size: root.compact ? 13px : Tok.fs-body;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+
+        if root.nav: VerticalLayout {
+            padding-top: 6px;
+            padding-bottom: 6px;
+            padding-left: 2px;
+            padding-right: 2px;
+            spacing: 3px;
+            alignment: center;
+
+            Image {
+                source: root.icon;
+                height: 22px;
+                image-fit: contain;
+                colorize: root.fg;
+                accessible-role: none;
+            }
+
+            Text {
+                text: root.text;
+                color: root.fg;
+                font-size: 11px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                overflow: elide;
+                accessible-role: none;
+            }
+        }
+    }
+
+    i-touch-area := TouchArea {
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            // Focus first so a focused LineEdit loses focus (and commits) before the action runs.
+            i-focus-scope.focus();
+            root.clicked();
+        }
+    }
+
+    // Zero width: only Tab and the explicit focus() from clicks give it focus; Space and Return activate it.
+    // Activation is on press (like std Button); key-down holds the pressed look until release or focus loss.
+    i-focus-scope := FocusScope {
+        x: 0;
+        width: 0;
+        enabled <=> root.enabled;
+        key-pressed(event) => {
+            if (root.enabled && (event.text == Key.Space || event.text == Key.Return)) {
+                if (!root.key-down) {
+                    root.key-down = true;
+                    root.clicked();
+                }
+                return accept;
+            }
+            return reject;
+        }
+        key-released(event) => {
+            if (event.text == Key.Space || event.text == Key.Return) {
+                root.key-down = false;
+                return accept;
+            }
+            return reject;
+        }
+        focus-lost(reason) => {
+            root.key-down = false;
+        }
+    }
+
+    if root.has-focus && root.enabled: Rectangle {
+        x: -2px;
+        y: -2px;
+        width: root.width + 4px;
+        height: root.height + 4px;
+        border-radius: Tok.radius-control + 2px;
+        border-width: 2px;
+        border-color: Tok.focus;
+        background: transparent;
+    }
+}
+
+// On/off switch for settings that apply at once. It keeps the std CheckBox surface (text, checked,
+// enabled, toggled) so call sites and bindings are unchanged. State is never colour alone: the
+// thumb moves and carries a check while on.
+export component Switch {
+    in property <string> text;
+    in property <bool> enabled <=> i-touch.enabled;
+    in-out property <bool> checked;
+    out property <bool> has-focus: i-focus.has-focus;
+    out property <bool> pressed: root.enabled && (i-touch.pressed || root.key-down);
+
+    callback toggled;
+
+    private property <bool> key-down;
+    private property <bool> hovering: root.enabled && i-touch.has-hover;
+    private property <length> track-w: 44px;
+    private property <length> track-x: root.text != "" ? Math.max(0px, root.width - root.track-w) : 0px;
+    private property <color> track-fill: !root.enabled ? Tok.disabled-bg
+        : root.checked ? (root.pressed ? Tok.accent-press : root.hovering ? Tok.accent-hover : Tok.accent)
+        : root.pressed ? Tok.rule : Tok.input;
+    private property <color> track-edge: !root.enabled ? Tok.rule
+        : root.checked ? transparent
+        : root.hovering || root.pressed ? Tok.foreground : Tok.muted;
+
+    min-width: root.text != "" ? 120px : root.track-w;
+    preferred-width: root.text != "" ? 240px : root.track-w;
+    horizontal-stretch: root.text != "" ? 1 : 0;
+    min-height: 36px;
+    preferred-height: root.text != "" ? Math.max(36px, i-label.preferred-height + 12px) : 36px;
+    vertical-stretch: 0;
+    forward-focus: i-focus;
+
+    accessible-role: switch;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-label: root.text;
+    accessible-action-default => {
+        i-focus.focus();
+        root.flip();
+    }
+
+    function flip() {
+        if (root.enabled) {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+
+    i-label := Text {
+        visible: root.text != "";
+        x: 0;
+        y: (root.height - self.height) / 2;
+        width: Math.max(0px, root.track-x - 12px);
+        height: self.preferred-height;
+        text: root.text;
+        wrap: word-wrap;
+        color: root.enabled ? Tok.foreground : Tok.disabled-fg;
+        font-size: Tok.fs-body;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+
+    i-track := Rectangle {
+        x: root.track-x;
+        y: (root.height - self.height) / 2;
+        width: root.track-w;
+        height: 24px;
+        border-radius: 12px;
+        background: root.track-fill;
+        border-width: 2px;
+        border-color: root.track-edge;
+
+        // Thumb: a small dot when off, a larger check disc when on; it widens while pressed.
+        i-thumb := Rectangle {
+            width: root.checked ? (root.pressed ? 22px : 18px) : (root.pressed ? 16px : 12px);
+            height: root.checked ? 18px : 12px;
+            x: root.checked ? root.track-w - 4px - self.width : 6px;
+            y: (parent.height - self.height) / 2;
+            border-radius: self.height / 2;
+            background: !root.enabled ? Tok.disabled-fg : root.checked ? Tok.accent-fg : Tok.muted;
+
+            if root.checked: Image {
+                source: Icons.check;
+                width: 12px;
+                height: 12px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                image-fit: contain;
+                colorize: root.enabled ? Tok.accent : Tok.disabled-bg;
+                accessible-role: none;
+            }
+        }
+    }
+
+    i-touch := TouchArea {
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            // Focus first so a focused LineEdit commits before the switch acts.
+            i-focus.focus();
+            root.flip();
+        }
+    }
+
+    // Zero width: reachable with Tab and by the explicit focus() above. Space and Return toggle.
+    i-focus := FocusScope {
+        x: 0;
+        width: 0;
+        enabled <=> root.enabled;
+        key-pressed(event) => {
+            if (root.enabled && (event.text == Key.Space || event.text == Key.Return)) {
+                if (!root.key-down) {
+                    root.key-down = true;
+                    root.flip();
+                }
+                return accept;
+            }
+            return reject;
+        }
+        key-released(event) => {
+            if (event.text == Key.Space || event.text == Key.Return) {
+                root.key-down = false;
+                return accept;
+            }
+            return reject;
+        }
+        focus-lost(reason) => {
+            root.key-down = false;
+        }
+    }
+
+    if root.has-focus && root.enabled: Rectangle {
+        x: root.track-x - 3px;
+        y: (root.height - self.height) / 2;
+        width: root.track-w + 6px;
+        height: 30px;
+        border-radius: 15px;
+        border-width: 2px;
+        border-color: Tok.focus;
+        background: transparent;
+    }
+}
+
+// Slider with a value grip, an optional device-default tick and optional step ticks.
+// Drag or click the track, wheel (one step per notch), arrow keys (Page = 10 steps, Home/End = ends).
+// Double-click or Backspace/Delete asks for the default: with `has-default` it jumps there and
+// commits, otherwise it only emits `no-default` so the owner can say that none is known.
+// `changed` is the live value; `released` is the value to commit and is only sent after a change.
+export component RangeSlider {
+    in property <bool> enabled <=> i-touch.enabled;
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in property <bool> has-default;
+    in property <float> default-value;
+    in-out property <float> value: root.minimum;
+    out property <bool> has-focus: i-focus.has-focus;
+
+    callback changed(float);
+    callback released(float);
+    callback no-default();
+
+    private property <float> span: root.maximum - root.minimum;
+    private property <float> unit: root.step > 0 ? root.step : root.span / 100;
+    private property <length> grip: 22px;
+    private property <length> travel: Math.max(root.width - root.grip, 1px);
+    private property <float> frac: root.span > 0 ? Math.clamp((root.value - root.minimum) / root.span, 0, 1) : 0;
+    private property <float> default-frac: root.span > 0 ? Math.clamp((root.default-value - root.minimum) / root.span, 0, 1) : 0;
+    private property <bool> moved;
+    private property <float> pending-value;
+    private property <int> ticks: (root.step > 0 && root.span / root.step >= 1 && root.span / root.step <= 20) ? Math.round(root.span / root.step) + 1 : 0;
+    out property <bool> at-default: root.has-default && Math.abs(root.value - root.default-value) < Math.max(0.000001, root.unit / 1000);
+
+    min-width: 96px;
+    min-height: 28px;
+    preferred-height: 28px;
+    max-height: 28px;
+    horizontal-stretch: 1;
+    forward-focus: i-focus;
+
+    accessible-role: slider;
+    accessible-enabled: root.enabled;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: root.unit;
+    accessible-description: root.has-default ? "Default " + root.default-value + ". Double-click or press Backspace to reset." : "No default is known for this setting.";
+    accessible-action-set-value(v) => {
+        if (v.is-float()) {
+            root.live(root.snap(v.to-float()));
+            root.done();
+        }
+    }
+    accessible-action-increment => { root.nudge(1); }
+    accessible-action-decrement => { root.nudge(-1); }
+
+    pure function snap(v: float) -> float {
+        // Device and model defaults need not lie on the editing grid.
+        if (root.has-default && v == root.default-value) {
+            return Math.clamp(v, root.minimum, root.maximum);
+        }
+        let on-grid = root.step > 0 ? root.minimum + Math.round((v - root.minimum) / root.step) * root.step : v;
+        return Math.clamp(on-grid, root.minimum, root.maximum);
+    }
+    pure function at(x: length) -> float {
+        return root.minimum + (x - root.grip / 2) / root.travel * root.span;
+    }
+    function live(v: float) {
+        let next = root.snap(v);
+        if (next != root.value) {
+            root.value = next;
+            root.moved = true;
+            root.changed(next);
+        }
+    }
+    function done() {
+        i-click-wait.stop();
+        if (root.moved) {
+            root.moved = false;
+            if (root.enabled) { root.released(root.value); }
+        }
+    }
+    function nudge(count: float) {
+        root.live(root.value + count * root.unit);
+        root.done();
+    }
+    public function reset() {
+        if (!root.has-default) {
+            root.no-default();
+        } else {
+            root.live(root.default-value);
+            root.done();
+        }
+    }
+
+    i-rail := Rectangle {
+        x: root.grip / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.travel;
+        height: 6px;
+        border-radius: 3px;
+        background: root.enabled ? Tok.rule-strong : Tok.rule;
+    }
+
+    Rectangle {
+        x: root.grip / 2;
+        y: i-rail.y;
+        width: root.travel * root.frac;
+        height: 6px;
+        border-radius: 3px;
+        background: root.enabled ? Tok.accent : Tok.disabled-fg;
+    }
+
+    for k in root.ticks: Rectangle {
+        x: root.grip / 2 + root.travel * k / (root.ticks - 1) - 1px;
+        y: i-rail.y + 9px;
+        width: 2px;
+        height: 4px;
+        border-radius: 1px;
+        background: root.enabled ? Tok.rule-strong : Tok.rule;
+    }
+
+    if root.has-default: Rectangle {
+        x: root.grip / 2 + root.travel * root.default-frac - 1px;
+        y: i-rail.y - 6px;
+        width: 2px;
+        height: 5px;
+        border-radius: 1px;
+        background: !root.enabled ? Tok.disabled-fg : root.at-default ? Tok.accent : Tok.muted;
+    }
+
+    if root.enabled && (i-touch.has-hover || i-touch.pressed): Rectangle {
+        x: root.travel * root.frac - 3px;
+        y: (parent.height - self.height) / 2;
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
+        background: Tok.accent.with-alpha(i-touch.pressed ? 0.26 : 0.14);
+    }
+
+    Rectangle {
+        x: root.travel * root.frac + 2px;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: !root.enabled ? Tok.disabled-bg : i-touch.pressed ? Tok.accent-soft : Tok.elevated;
+        border-width: 2px;
+        border-color: !root.enabled ? Tok.disabled-fg : i-touch.has-hover || i-touch.pressed ? Tok.accent-hover : Tok.accent;
+    }
+
+    if root.has-focus && root.enabled: Rectangle {
+        x: root.travel * root.frac - 3px;
+        y: (parent.height - self.height) / 2;
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
+        border-width: 2px;
+        border-color: Tok.focus;
+        background: transparent;
+    }
+
+    // Commits a plain click once it can no longer be the first half of a double-click, so the
+    // double-click reset never races a speculative hardware write.
+    i-click-wait := Timer {
+        interval: 500ms;
+        running: false;
+        triggered => {
+            if (root.enabled) { root.live(root.pending-value); }
+            root.done();
+        }
+    }
+
+    i-touch := TouchArea {
+        property <float> grab-value;
+        property <length> grab-x;
+        property <bool> dragged;
+        property <float> wheel;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        pointer-event(event) => {
+            if (event.button != PointerEventButton.left) {
+                return;
+            }
+            if (event.kind == PointerEventKind.down) {
+                i-focus.focus();
+                // A press off the grip jumps there; a press on it keeps the value and grabs it.
+                if (Math.abs((self.mouse-x - root.travel * root.frac - root.grip / 2) / 1px) > root.grip / 2px) {
+                    root.live(root.at(self.mouse-x));
+                }
+                self.grab-value = root.value;
+                self.grab-x = self.mouse-x;
+                self.dragged = false;
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                if (self.dragged) {
+                    root.done();
+                } else if (root.moved) {
+                    root.pending-value = root.value;
+                    i-click-wait.running = true;
+                    i-click-wait.restart();
+                }
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                if (Math.abs((self.mouse-x - self.grab-x) / 1px) > 3) {
+                    self.dragged = true;
+                }
+                root.live(self.grab-value + (self.mouse-x - self.grab-x) / root.travel * root.span);
+            }
+        }
+        double-clicked => {
+            root.reset();
+        }
+        scroll-event(event) => {
+            if (!root.enabled || event.delta-y == 0px) {
+                return reject;
+            }
+            self.wheel += event.delta-y / 1px;
+            let up = self.wheel > 0;
+            // At an end the wheel goes on scrolling the page instead of being swallowed.
+            if ((up && root.value >= root.maximum) || (!up && root.value <= root.minimum)) {
+                self.wheel = 0;
+                return reject;
+            }
+            // One notch is 60 px; touchpads send small deltas that add up to a step.
+            if (Math.abs(self.wheel) >= 30) {
+                root.nudge((up ? 1 : -1) * Math.max(1, Math.round(Math.abs(self.wheel) / 60)));
+                self.wheel = 0;
+            }
+            return accept;
+        }
+    }
+
+    // Zero width: Tab and the explicit focus() above give it focus.
+    i-focus := FocusScope {
+        x: 0;
+        width: 0;
+        enabled <=> root.enabled;
+        key-pressed(event) => {
+            if (!root.enabled) {
+                return reject;
+            }
+            if (event.text == Key.RightArrow || event.text == Key.UpArrow) {
+                root.nudge(1);
+            } else if (event.text == Key.LeftArrow || event.text == Key.DownArrow) {
+                root.nudge(-1);
+            } else if (event.text == Key.PageUp) {
+                root.nudge(10);
+            } else if (event.text == Key.PageDown) {
+                root.nudge(-10);
+            } else if (event.text == Key.Home) {
+                root.live(root.minimum);
+                root.done();
+            } else if (event.text == Key.End) {
+                root.live(root.maximum);
+                root.done();
+            } else if (event.text == Key.Backspace || event.text == Key.Delete) {
+                root.reset();
+            } else {
+                return reject;
+            }
+            return accept;
+        }
+    }
+}
+
+// Small read-only status label. Tone: 0 neutral, 1 ready, 2 notice, 3 problem. Always text, so
+// the state never relies on colour.
+export component StatusPill {
+    in property <string> text;
+    in property <int> tone;
+
+    min-width: i-layout.min-width;
+    preferred-width: i-layout.preferred-width;
+    min-height: 24px;
+    preferred-height: 24px;
+    max-height: 24px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+
+    Rectangle {
+        border-radius: 12px;
+        background: root.tone == 1 ? Tok.accent-soft : root.tone == 2 ? Tok.cyan-soft : root.tone == 3 ? Tok.error-soft : Tok.input;
+        border-width: 1px;
+        border-color: root.tone == 1 ? Tok.accent.with-alpha(0.22) : root.tone == 3 ? Tok.error.with-alpha(0.4) : Tok.rule-strong;
+
+        i-layout := HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            alignment: center;
+            Text {
+                text: root.text;
+                color: root.tone == 1 ? Tok.accent : root.tone == 3 ? Tok.error : Tok.foreground;
+                font-size: 12px;
+                font-weight: 600;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+    }
+}
