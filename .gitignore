@@ -8,8 +8,7 @@
 /case/extraction-evidence/
 /.signet/preflight.json
 
-# --- added by github-ready ---
-# --- base ---
+# Editor and operating-system files
 *~
 *.swp
 *.swo
@@ -25,7 +24,7 @@ desktop.ini
 tmp/
 temp/
 .cache/
-# --- secrets ---
+# Credentials
 .env
 .env.*
 !.env.example
@@ -57,7 +56,7 @@ secrets.json
 kubeconfig
 .aws/
 .ssh/
-# --- python ---
+# Python build and cache files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -78,13 +77,14 @@ ENV/
 htmlcov/
 .ipynb_checkpoints/
 .python-version
-# --- rust ---
+# Rust temporary files
 **/*.rs.bk
 *.pdb
 
-# --- not part of the published controller ---
+# Local development and investigation files
 # Vendor installer, extracted binaries, strings dumps and local investigation notes.
 /case/
 # Local agent state.
 /.omp/
+/.serena/
 /.signet/
